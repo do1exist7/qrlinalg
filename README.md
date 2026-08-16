@@ -53,6 +53,49 @@ The test build exposes private state components with `QRLINALG_TESTING` solely
 so these invariants can be inspected without enlarging the public API. Normal
 Make and fpm builds retain private components and contain no test-only code.
 
+### Differential tests against the original solver
+
+The optional differential harness runs identical datasets through qrlinalg and
+the original `GSEPIIS`/`GHEPIIS` implementation under `orig/claude`. It is kept
+separate from `make check` because the datasets and original reference sources
+are not part of the standalone library:
+
+```sh
+make differential-build PREC=8
+make compare-orig PREC=8 DATA_DIR=/path/to/data
+```
+
+`DATA_DIR` must contain `cases.csv`. Relative matrix paths are resolved from
+the directory containing the manifest. Required columns are:
+
+```text
+case_id,kind,h_file,s_file,shift,tol,max_iter,norm_mode
+real_100,real,H_real.dat,S_real.dat,-7.33473,1e-12,30,1
+complex_100,complex,H_complex.dat,S_complex.dat,-7.77461,1e-12,30,1
+```
+
+Optional `eigen_rtol`, `vector_rtol`, and `residual_tol` columns override the
+precision-scaled defaults for an individual case. Blank optional fields use
+the defaults. `case_id` may contain letters, digits, dots, underscores, and
+hyphens.
+
+Each matrix file contains a four-byte default integer order followed by the
+upper triangle, column by column, as binary64 real or complex values. The
+drivers convert those values to the selected `wp` and reconstruct the lower
+triangle by symmetry or Hermitian symmetry. H and S must have the same order.
+
+The comparison requires compatible solver statuses, checks eigenvalues and
+generalized residuals, and compares Euclidean-normalized eigenvectors after
+real sign or complex phase alignment. Iteration counts and relative-accuracy
+estimates are reported but are not required to be identical. Raw tagged output
+and diagnostics from both implementations are retained under
+`build/differential-<configuration>-wp<kind>/results/`.
+
+Both drivers are serial. The original `linalg.f90` is compiled unchanged
+against a test-only compatibility module and is configured to select its
+existing single-process numerical branches. The differential harness therefore
+does not require an MPI compiler, launcher, or runtime.
+
 ## State and ownership
 
 The module exposes two independent concrete types, `qr_real_state` and

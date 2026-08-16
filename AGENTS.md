@@ -54,6 +54,8 @@ state.
 - `test/test_initialization.f90`, `test/test_factorization.f90`, and
   `test/test_inverse_iteration.f90` contain white-box state-contract and
   analytical numerical tests grouped by behavior.
+- `test/differential/` contains the optional data-driven comparison harness
+  for qrlinalg and the original `GSEPIIS`/`GHEPIIS` implementation.
 - `orig/` contains reference implementations, including the pristine
   `GSEPIIS` and `GHEPIIS` algorithms. Treat all files under `orig/` as
   read-only reference material.
@@ -198,9 +200,15 @@ The direction-change estimate is:
 
 ```text
 alpha   = (x**T*v)/(v**T*v)       real
-alpha   = (x**H*v)/(v**H*v)       complex
+alpha   = (v**H*x)/(v**H*v)       complex
 rel_acc = ||x-alpha*v||_2 / ||x||_2
 ```
+
+The complex coefficient must conjugate the previous iterate `v`, not the new
+iterate `x`. This makes the direction comparison invariant under arbitrary
+complex phase and prevents a roundoff-level phase change from causing false
+nonconvergence in the QR-backed solve. The literal `x**H*v` expression in the
+original GHEPIIS helper is not suitable after replacing its LDLH solve with QR.
 
 Stopping behavior must remain compatible with the reference algorithms:
 
@@ -354,6 +362,7 @@ make release PREC=8
 make debug PREC=10
 make release PREC=16 COMPILER=ifx
 make check
+make compare-orig PREC=8 DATA_DIR=/path/to/data
 ```
 
 Supported compiler selectors are `gfortran`, `ifort`, `ifx`, and `nvfortran`.
@@ -417,6 +426,21 @@ known analytical eigenvalues.
 `QRLINALG_TESTING` may expose otherwise private state components only in the
 dedicated white-box test build. Normal Make and fpm library builds must retain
 private components and contain no alternate numerical implementation.
+
+The optional `make compare-orig` target is not part of `make check`. It requires
+`orig/claude`, Python 3, and a data manifest. Compile both drivers at the same
+`wp` and pass identical shift, tolerance, iteration-limit, normalization, and
+starting-vector conventions. Preserve the original solver sources; use the
+dedicated driver and serial MPI compatibility layer in `test/differential/`
+for machine-readable output. The compatibility layer must remain test-only and
+must force the original linalg module onto its existing serial branches.
+
+Differential comparison must account for mathematical nonuniqueness. Align
+real eigenvectors by sign and complex eigenvectors by phase, compare normalized
+vectors, and use precision-scaled tolerances for eigenvalues and residuals.
+Iteration counts and rough relative-accuracy estimates are diagnostic because
+roundoff can move the stopping decision by an iteration. Store generated
+driver output only below `build/`.
 
 ## Editing and version-control workflow
 

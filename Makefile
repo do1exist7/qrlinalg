@@ -14,6 +14,7 @@ endif
 ifeq ($(COMPILER),gfortran)
   FC := gfortran
   MODULE_FLAGS := -I$(BUILD_DIR) -J$(BUILD_DIR)
+  ORIG_MODULE_FLAGS = -I$(DIFF_ORIG_DIR) -J$(DIFF_ORIG_DIR)
   FIXED_FLAGS := -ffixed-line-length-none
   PREPROCESS_FLAGS := -cpp
   WP_FLAGS := $(PREPROCESS_FLAGS) -DQRLINALG_WP=$(PREC)
@@ -23,6 +24,7 @@ ifeq ($(COMPILER),gfortran)
 else ifeq ($(COMPILER),ifort)
   FC := ifort
   MODULE_FLAGS := -I$(BUILD_DIR) -module $(BUILD_DIR)
+  ORIG_MODULE_FLAGS = -I$(DIFF_ORIG_DIR) -module $(DIFF_ORIG_DIR)
   FIXED_FLAGS := -extend-source
   PREPROCESS_FLAGS := -fpp
   WP_FLAGS := $(PREPROCESS_FLAGS) -DQRLINALG_WP=$(PREC)
@@ -32,6 +34,7 @@ else ifeq ($(COMPILER),ifort)
 else ifeq ($(COMPILER),ifx)
   FC := ifx
   MODULE_FLAGS := -I$(BUILD_DIR) -module $(BUILD_DIR)
+  ORIG_MODULE_FLAGS = -I$(DIFF_ORIG_DIR) -module $(DIFF_ORIG_DIR)
   FIXED_FLAGS := -extend-source
   PREPROCESS_FLAGS := -fpp
   WP_FLAGS := $(PREPROCESS_FLAGS) -DQRLINALG_WP=$(PREC)
@@ -41,6 +44,7 @@ else ifeq ($(COMPILER),ifx)
 else ifeq ($(COMPILER),nvfortran)
   FC := nvfortran
   MODULE_FLAGS := -I$(BUILD_DIR) -module $(BUILD_DIR)
+  ORIG_MODULE_FLAGS = -I$(DIFF_ORIG_DIR) -module $(DIFF_ORIG_DIR)
   FIXED_FLAGS := -Mextend
   PREPROCESS_FLAGS := -Mpreprocess
   WP_FLAGS := $(PREPROCESS_FLAGS) -DQRLINALG_WP=$(PREC)
@@ -66,6 +70,26 @@ TEST_NAMES := test_initialization test_factorization test_inverse_iteration
 TEST_EXES := $(addprefix $(BUILD_DIR)/,$(TEST_NAMES))
 TEST_SUPPORT_OBJECT := $(BUILD_DIR)/test_support.o
 
+PYTHON ?= python3
+DATA_DIR ?= data
+DIFF_MANIFEST ?= $(DATA_DIR)/cases.csv
+DIFF_DIR := build/differential-$(CONFIG)-wp$(PREC)
+DIFF_NEW_DIR := $(DIFF_DIR)/new
+DIFF_ORIG_DIR := $(DIFF_DIR)/orig
+DIFF_NEW_EXE := $(DIFF_NEW_DIR)/qrlinalg_driver
+DIFF_ORIG_EXE := $(DIFF_ORIG_DIR)/orig_driver
+DIFF_OUTPUT_DIR := $(DIFF_DIR)/results
+DIFF_SOURCE_DIR := test/differential
+ORIG_SOURCE_DIR := orig/claude
+ORIG_MPI_OBJECT := $(DIFF_ORIG_DIR)/mpi_serial.o
+ORIG_WP_OBJECT := $(DIFF_ORIG_DIR)/wp_def.o
+ORIG_GLOBVARS_OBJECT := $(DIFF_ORIG_DIR)/globvars.o
+ORIG_BLAS_OBJECT := $(DIFF_ORIG_DIR)/blas.o
+ORIG_LINALG_OBJECT := $(DIFF_ORIG_DIR)/linalg.o
+ORIG_DRIVER_OBJECT := $(DIFF_ORIG_DIR)/orig_driver.o
+ORIG_OBJECTS := $(ORIG_MPI_OBJECT) $(ORIG_WP_OBJECT) $(ORIG_GLOBVARS_OBJECT) \
+	$(ORIG_BLAS_OBJECT) $(ORIG_LINALG_OBJECT) $(ORIG_DRIVER_OBJECT)
+
 OBJECTS := \
 	$(BUILD_DIR)/wp_def.o \
 	$(BUILD_DIR)/qrupdate_blas.o \
@@ -77,7 +101,8 @@ OBJECTS := \
 	$(BUILD_DIR)/qrupdate.o \
 	$(BUILD_DIR)/qrlinalg.o
 
-.PHONY: all release debug build check test test-one clean
+.PHONY: all release debug build check test test-one differential-build \
+	differential-test compare-orig clean
 
 all: release
 
@@ -99,7 +124,19 @@ test:
 test-one: $(TEST_EXES)
 	@set -e; for test_exe in $(TEST_EXES); do $$test_exe; done
 
+differential-build: $(DIFF_NEW_EXE) $(DIFF_ORIG_EXE)
+
+differential-test compare-orig: differential-build
+	$(PYTHON) $(DIFF_SOURCE_DIR)/compare_outputs.py \
+		--manifest "$(DIFF_MANIFEST)" \
+		--new-exe "$(DIFF_NEW_EXE)" \
+		--orig-exe "$(DIFF_ORIG_EXE)" \
+		--output-dir "$(DIFF_OUTPUT_DIR)"
+
 $(BUILD_DIR):
+	mkdir -p $@
+
+$(DIFF_NEW_DIR) $(DIFF_ORIG_DIR):
 	mkdir -p $@
 
 $(LIB): $(OBJECTS)
@@ -138,6 +175,30 @@ $(TEST_SUPPORT_OBJECT): test/test_support.f90 $(LIB)
 
 $(BUILD_DIR)/test_%: test/test_%.f90 $(TEST_SUPPORT_OBJECT) $(LIB)
 	$(FC) $(FFLAGS) $(OWN_WARNING_FLAGS) $< $(TEST_SUPPORT_OBJECT) $(LIB) -o $@
+
+$(DIFF_NEW_EXE): $(DIFF_SOURCE_DIR)/qrlinalg_driver.f90 $(LIB) | $(DIFF_NEW_DIR)
+	$(FC) $(FFLAGS) $(OWN_WARNING_FLAGS) $< $(LIB) -o $@
+
+$(ORIG_MPI_OBJECT): $(DIFF_SOURCE_DIR)/mpi_serial.f90 | $(DIFF_ORIG_DIR)
+	$(FC) $(ORIG_MODULE_FLAGS) $(CONFIG_FLAGS) -c $< -o $@
+
+$(ORIG_WP_OBJECT): $(ORIG_SOURCE_DIR)/wp_def_$(PREC).f90 $(ORIG_MPI_OBJECT) | $(DIFF_ORIG_DIR)
+	$(FC) $(ORIG_MODULE_FLAGS) $(CONFIG_FLAGS) -c $< -o $@
+
+$(ORIG_GLOBVARS_OBJECT): $(ORIG_SOURCE_DIR)/globvars.f90 $(ORIG_WP_OBJECT) | $(DIFF_ORIG_DIR)
+	$(FC) $(ORIG_MODULE_FLAGS) $(CONFIG_FLAGS) -c $< -o $@
+
+$(ORIG_BLAS_OBJECT): $(QRUPDATE_DIR)/BLAS.f $(ORIG_WP_OBJECT) | $(DIFF_ORIG_DIR)
+	$(FC) $(ORIG_MODULE_FLAGS) $(CONFIG_FLAGS) $(FIXED_FLAGS) -c $< -o $@
+
+$(ORIG_LINALG_OBJECT): $(ORIG_SOURCE_DIR)/linalg.f90 $(ORIG_GLOBVARS_OBJECT) | $(DIFF_ORIG_DIR)
+	$(FC) $(ORIG_MODULE_FLAGS) $(CONFIG_FLAGS) -c $< -o $@
+
+$(ORIG_DRIVER_OBJECT): $(DIFF_SOURCE_DIR)/orig_driver.f90 $(ORIG_LINALG_OBJECT) | $(DIFF_ORIG_DIR)
+	$(FC) $(ORIG_MODULE_FLAGS) $(CONFIG_FLAGS) -c $< -o $@
+
+$(DIFF_ORIG_EXE): $(ORIG_OBJECTS)
+	$(FC) $(ORIG_MODULE_FLAGS) $(CONFIG_FLAGS) $^ -o $@
 
 clean:
 	rm -rf build

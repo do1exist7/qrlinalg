@@ -135,9 +135,11 @@ contains
     real(wp), parameter :: shift = 1.25_wp, exact_lambda = 1.0_wp
     complex(wp) :: h(n,n), s(n,n), s_before(n,n)
     complex(wp) :: v(n), v_before(n), x(n), residual_vector(n)
+    complex(wp) :: projection_coefficient
     real(wp) :: lambda, rel_acc, tolerance, eigen_tolerance
     real(wp) :: converged_lambda, converged_rel_acc
     real(wp) :: residual, s_norm, euclidean_norm, component_scale
+    real(wp) :: expected_rel_acc, initial_norm_squared, x_norm_squared
     integer :: info, num_iter, converged_num_iter
 
     tolerance = 1000.0_wp * epsilon(1.0_wp)
@@ -206,6 +208,26 @@ contains
     call check(info == QR_SUCCESS .and. &
                abs(component_scale - 1.0_wp) <= eigen_tolerance, &
                'complex other norm modes retain GHEPIIS component scaling', &
+               failures)
+
+    ! Verify the complex direction-change coefficient independently after one
+    ! iteration. For a complex projection of the new vector x onto the old
+    ! vector v, alpha=(v^H*x)/(v^H*v). Reversing the inner-product arguments
+    ! conjugates alpha and makes the result sensitive to an arbitrary phase;
+    ! on large QR factorizations that error can prevent convergence even when
+    ! the generalized residual is already at working-precision accuracy.
+    call state%solve(s, v, x, lambda, tolerance, 1, 2, &
+                     rel_acc, num_iter, info)
+    initial_norm_squared = sum(abs(v)**2)
+    x_norm_squared = sum(abs(x)**2)
+    projection_coefficient = dot_product(v, x) / &
+                             cmplx(initial_norm_squared, 0.0_wp, kind=wp)
+    expected_rel_acc = sqrt(sum(abs(x - projection_coefficient * v)**2) / &
+                                 x_norm_squared)
+    call check(info == QR_ERR_NO_CONVERGENCE .and. num_iter == 1, &
+               'complex one-step solve reports the iteration limit', failures)
+    call check(abs(rel_acc - expected_rel_acc) <= eigen_tolerance, &
+               'complex direction error uses the phase-invariant projection', &
                failures)
 
     write(*,'(a,i0,3(a,es12.4),a,i0)') '  complex solve wp=', wp, &

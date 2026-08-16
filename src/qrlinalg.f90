@@ -1115,7 +1115,7 @@ contains
   !preserves the component-scaling convention of the Hermitian inverse
   !iteration interface. Directional convergence is estimated by
   !
-  !             alpha   = (x^H*v)/(v^H*v),
+  !             alpha   = (v^H*x)/(v^H*v),
   !             rel_acc = ||x-alpha*v||_2/||x||_2 .
   !
   !For tol>0 the first rel_acc<=tol terminates iteration. For tol<=0, the
@@ -1238,15 +1238,17 @@ contains
       end if
       x = x / cmplx(max_component, 0.0_wp, kind=wp)
 
-      !Compute alpha=(x^H*v)/(v^H*v) and the prescribed relative difference
-      !between x and alpha*v.
+      !Compute alpha=(v^H*x)/(v^H*v) and the prescribed relative difference
+      !between x and alpha*v. Conjugating the previous iterate, rather than
+      !the new iterate, makes this comparison invariant under the arbitrary
+      !complex phase of an eigenvector.
       current_norm_squared = complex_norm_squared( &
                                matrix_n, self%solve_work(1:matrix_n))
       if (current_norm_squared <= tiny(1.0_wp)) then
         info = QR_ERR_SINGULAR
         return
       end if
-      coefficient = dot_product(x, self%solve_work(1:matrix_n)) / &
+      coefficient = dot_product(self%solve_work(1:matrix_n), x) / &
                     cmplx(current_norm_squared, 0.0_wp, kind=wp)
       eigenvector_norm_squared = complex_norm_squared(matrix_n, x)
       norm_of_diff = complex_direction_difference( &
@@ -1413,7 +1415,7 @@ contains
   !
   !                 ||x-alpha*y||_2 / ||x||_2 .
   !
-  !For Hermitian inverse iteration alpha=(x^H*y)/(y^H*y). Each squared
+  !For Hermitian inverse iteration alpha=(y^H*x)/(y^H*y). Each squared
   !magnitude abs(x(i)-alpha*y(i))^2 is accumulated in real(wp).
   !
   !  Input parameters:
