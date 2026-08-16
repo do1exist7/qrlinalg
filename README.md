@@ -3,7 +3,9 @@
 `qrlinalg` is the serial QR-state layer intended for ECGPACK generalized
 symmetric and Hermitian eigenproblems. Version 0.1 implements initialization
 and fresh real/complex QR factorization plus generalized inverse iteration.
-Structural updates remain explicit stubs that return `QR_ERR_NOT_IMPLEMENTED`.
+Symmetric/Hermitian row-and-column replacement updates the stored factors in
+place. Append and deletion remain explicit stubs that return
+`QR_ERR_NOT_IMPLEMENTED`.
 
 The project vendors the generic-precision `qrupdate-ng` sources under
 `src/qrupdate/`, copied from `linalg/src/qrupdate`. That directory records the
@@ -196,9 +198,14 @@ call qr%solve(S, v_initial, x, lambda, tol, max_iter, norm_mode, &
               rel_acc, num_iter, info)
 ```
 
-In v0.1 only the replacement, append, and deletion methods return
-`QR_ERR_NOT_IMPLEMENTED`. Recoverable errors never use `error stop`, and failed
-update stubs do not increment counters.
+`replace_symmetric` applies the physical column changes `delta_h` and `delta_s`
+at the existing shift without retaining either vector. It preserves the active
+order and increments both update counters once after the complete symmetric or
+Hermitian operation. A complex diagonal change must be real within a
+precision-scaled tolerance. Invalid calls preserve the complete state.
+
+In v0.1 only append and deletion return `QR_ERR_NOT_IMPLEMENTED`. Recoverable
+errors never use `error stop`, and rejected updates do not increment counters.
 
 The mutable states are not thread-safe. Threads or tasks must use independent
 states. They contain no MPI communicator or branch and should not be replicated

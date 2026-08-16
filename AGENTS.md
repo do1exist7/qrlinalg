@@ -30,12 +30,12 @@ The following operations are implemented for both `qr_real_state` and
 
 - `initialize(max_n, info)`;
 - `factorize_fresh(H, S, shift, info)`;
+- `replace_symmetric(idx, delta_h, delta_s, info)`;
 - `solve(S, v_initial, x, lambda, tol, max_iter, norm_mode, rel_acc, num_iter,
   info)`.
 
 The following public interfaces are present but remain version 0.1 stubs:
 
-- `replace_symmetric`;
 - `append_symmetric`;
 - `delete_symmetric`.
 
@@ -261,9 +261,9 @@ d*e_i**T + e_i*(d-d(i)*e_i)**T       real
 d*e_i**H + e_i*(d-d(i)*e_i)**H       complex
 ```
 
-The future implementation should use two rank-one `qr1up` operations. Copy
-caller vectors to state-owned workspace first because qrupdate routines may
-modify vector arguments.
+The implementation uses two rank-one `qr1up` operations. Caller vectors are
+copied to state-owned workspace first because qrupdate routines may modify
+vector arguments.
 
 Append at `n+1` is intended to use `qrinc` followed by `qrinr`. Deletion is
 intended to use `qrdec` followed by `qrder`. Complex operations must preserve

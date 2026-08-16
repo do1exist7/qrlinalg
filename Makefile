@@ -66,7 +66,8 @@ endif
 FFLAGS := $(MODULE_FLAGS) $(CONFIG_FLAGS)
 ARFLAGS = rcs
 QRLINALG_TEST_FLAGS ?=
-TEST_NAMES := test_initialization test_factorization test_inverse_iteration
+TEST_NAMES := test_initialization test_factorization test_replacement \
+	test_inverse_iteration
 TEST_EXES := $(addprefix $(BUILD_DIR)/,$(TEST_NAMES))
 TEST_SUPPORT_OBJECT := $(BUILD_DIR)/test_support.o
 
@@ -166,7 +167,8 @@ $(BUILD_DIR)/qrupdate_complex.o: $(QRUPDATE_DIR)/qrupdate_complex.f90 $(BUILD_DI
 $(BUILD_DIR)/qrupdate.o: $(QRUPDATE_DIR)/qrupdate.f90 $(BUILD_DIR)/qrupdate_real.o $(BUILD_DIR)/qrupdate_complex.o | $(BUILD_DIR)
 	$(FC) $(FFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/qrlinalg.o: $(SRC_DIR)/qrlinalg.f90 $(BUILD_DIR)/wp_def.o | $(BUILD_DIR)
+$(BUILD_DIR)/qrlinalg.o: $(SRC_DIR)/qrlinalg.f90 $(BUILD_DIR)/wp_def.o \
+		$(BUILD_DIR)/qrupdate.o | $(BUILD_DIR)
 	$(FC) $(FFLAGS) $(PREPROCESS_FLAGS) $(QRLINALG_TEST_FLAGS) \
 		$(OWN_WARNING_FLAGS) -c $< -o $@
 

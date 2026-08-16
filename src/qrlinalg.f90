@@ -24,6 +24,7 @@
 module qrlinalg
   use iso_fortran_env, only: int64
   use wp_def, only: wp
+  use qrupdate, only: qr1up
   implicit none
   private
 
@@ -672,10 +673,10 @@ contains
     info = QR_SUCCESS
   end subroutine complex_factorize_fresh
 
-  !Subroutine real_replace_symmetric is the reserved interface for replacing
-  !one row and the corresponding column of a real symmetric problem while
-  !updating the stored factorization. If delta_h and delta_s denote the changes
-  !in the physical H and S columns, the change represented by the QR state is
+  !Subroutine real_replace_symmetric replaces one row and the corresponding
+  !column of a real symmetric problem by updating the stored QR factors. If
+  !delta_h and delta_s denote the changes in the physical H and S columns, the
+  !change represented by the QR state is
   !
   !                 d = delta_h - self%shift*delta_s .
   !
@@ -684,9 +685,9 @@ contains
   !                 d*e_idx^T + e_idx*(d-d(idx)*e_idx)^T .
   !
   !The subtraction of d(idx)*e_idx prevents the diagonal change from being
-  !applied twice. The complete operation uses two rank-one qrupdate calls
-  !and state-owned copies because qrupdate kernels may overwrite their vector
-  !arguments.
+  !applied twice. The operation applies these two rank-one terms sequentially
+  !with qr1up. qr1up overwrites its u and v arguments, so both calls use
+  !state-owned copies and leave delta_h and delta_s unchanged.
   !
   !  Input parameters:
   !    idx     - One-based index of the replaced row and column.
@@ -694,20 +695,65 @@ contains
   !    delta_s - Change in S(:,idx), including the diagonal element.
   !
   !  Input/output parameter:
-  !    self    - The QR state to update.
+  !    self    - A valid QR state of active order n. On success Q and R
+  !              represent the updated shifted matrix, valid, n, capacity, and
+  !              shift are preserved, and both structural-update counters are
+  !              incremented by one.
   !
   !  Output parameter:
-  !    info    - QR_ERR_NOT_IMPLEMENTED in version 0.1.
+  !    info    - QR_SUCCESS when both rank-one updates are applied;
+  !              QR_ERR_INVALID_ARGUMENT when the state is invalid, idx is
+  !              outside 1:n, either change vector has length other than n, or
+  !              required state workspace is unavailable.
   !
-  !The present stub does not inspect its arguments and leaves all factors,
-  !metadata, and counters unchanged.
+  !All validation precedes modification of Q or R, so QR_ERR_INVALID_ARGUMENT
+  !preserves the complete state. The validated qr1up calls have no numerical
+  !failure return. No allocation is performed.
   subroutine real_replace_symmetric(self, idx, delta_h, delta_s, info)
     class(qr_real_state), intent(inout) :: self
     integer, intent(in) :: idx
     real(wp), intent(in) :: delta_h(:), delta_s(:)
     integer, intent(out) :: info
+    integer :: i, matrix_n
 
-    info = QR_ERR_NOT_IMPLEMENTED
+    info = QR_ERR_INVALID_ARGUMENT
+    if (.not. self%valid .or. self%n <= 0) return
+    if (.not. allocated(self%q) .or. .not. allocated(self%r)) return
+    if (.not. allocated(self%update_work)) return
+    matrix_n = self%n
+    if (idx < 1 .or. idx > matrix_n) return
+    if (size(delta_h) /= matrix_n .or. size(delta_s) /= matrix_n) return
+    if (size(self%update_work) < 4 * matrix_n) return
+
+    !First apply d*e_idx^T. The update vectors occupy the first two workspace
+    !blocks and qr1up uses the remaining two blocks as rotation workspace.
+    do i = 1, matrix_n
+      self%update_work(i) = delta_h(i) - self%shift * delta_s(i)
+      self%update_work(matrix_n + i) = 0.0_wp
+    end do
+    self%update_work(matrix_n + idx) = 1.0_wp
+    call qr1up(matrix_n, matrix_n, matrix_n, self%q, self%capacity, &
+               self%r, self%capacity, self%update_work(1:matrix_n), &
+               self%update_work(matrix_n + 1:2 * matrix_n), &
+               self%update_work(2 * matrix_n + 1:4 * matrix_n))
+
+    !Then apply e_idx*(d-d(idx)*e_idx)^T. Reconstruct d because qr1up is
+    !permitted to overwrite both vectors supplied to the first call.
+    do i = 1, matrix_n
+      self%update_work(i) = 0.0_wp
+      self%update_work(matrix_n + i) = delta_h(i) - &
+                                           self%shift * delta_s(i)
+    end do
+    self%update_work(idx) = 1.0_wp
+    self%update_work(matrix_n + idx) = 0.0_wp
+    call qr1up(matrix_n, matrix_n, matrix_n, self%q, self%capacity, &
+               self%r, self%capacity, self%update_work(1:matrix_n), &
+               self%update_work(matrix_n + 1:2 * matrix_n), &
+               self%update_work(2 * matrix_n + 1:4 * matrix_n))
+
+    self%structural_updates = self%structural_updates + 1_int64
+    self%updates_since_fresh = self%updates_since_fresh + 1_int64
+    info = QR_SUCCESS
   end subroutine real_replace_symmetric
 
   !Subroutine complex_replace_symmetric is the Hermitian counterpart of
@@ -716,10 +762,14 @@ contains
   !
   !                 d*e_idx^H + e_idx*(d-d(idx)*e_idx)^H .
   !
-  !The diagonal of a Hermitian matrix is real. A complete implementation must
-  !therefore reject an imaginary diagonal change larger than a
-  !precision-scaled tolerance before applying the two conjugate rank-one
-  !updates.
+  !The diagonal of a Hermitian matrix is real. The represented diagonal change
+  !is therefore rejected when its imaginary part exceeds
+  !
+  !       100*epsilon(1.0_wp)*max(1,maxval(abs(d))).
+  !
+  !An accepted roundoff-sized imaginary part is discarded before either
+  !rank-one update. qr1up interprets its complex update as u*v^H, so the two
+  !terms reconstruct the conjugate row without modifying caller arrays.
   !
   !  Input parameters:
   !    idx     - One-based index of the replaced row and column.
@@ -727,19 +777,86 @@ contains
   !    delta_s - Change in S(:,idx), including its nominally real diagonal.
   !
   !  Input/output parameter:
-  !    self    - The complex QR state to update.
+  !    self    - A valid complex QR state. Successful state and counter changes
+  !              are the same as for real_replace_symmetric.
   !
   !  Output parameter:
-  !    info    - QR_ERR_NOT_IMPLEMENTED in version 0.1.
+  !    info    - QR_SUCCESS when the Hermitian replacement is complete;
+  !              QR_ERR_INVALID_ARGUMENT under the real-routine validation
+  !              conditions or when the represented diagonal change is not
+  !              real within the tolerance above.
   !
-  !The present stub leaves the complete state unchanged.
+  !Every rejection occurs before Q or R is modified. The routine allocates no
+  !memory and increments each counter once, rather than once per rank-one term.
   subroutine complex_replace_symmetric(self, idx, delta_h, delta_s, info)
     class(qr_complex_state), intent(inout) :: self
     integer, intent(in) :: idx
     complex(wp), intent(in) :: delta_h(:), delta_s(:)
     integer, intent(out) :: info
+    complex(wp) :: change
+    real(wp) :: diagonal_tolerance, update_scale
+    integer :: i, matrix_n
 
-    info = QR_ERR_NOT_IMPLEMENTED
+    info = QR_ERR_INVALID_ARGUMENT
+    if (.not. self%valid .or. self%n <= 0) return
+    if (.not. allocated(self%q) .or. .not. allocated(self%r)) return
+    if (.not. allocated(self%update_work)) return
+    if (.not. allocated(self%real_work)) return
+    matrix_n = self%n
+    if (idx < 1 .or. idx > matrix_n) return
+    if (size(delta_h) /= matrix_n .or. size(delta_s) /= matrix_n) return
+    if (size(self%update_work) < 3 * matrix_n) return
+    if (size(self%real_work) < matrix_n) return
+
+    !Determine the scale and validate the diagonal before either qr1up call.
+    update_scale = 1.0_wp
+    do i = 1, matrix_n
+      change = delta_h(i) - &
+               cmplx(self%shift, 0.0_wp, kind=wp) * delta_s(i)
+      update_scale = max(update_scale, abs(change))
+    end do
+    change = delta_h(idx) - &
+             cmplx(self%shift, 0.0_wp, kind=wp) * delta_s(idx)
+    diagonal_tolerance = 100.0_wp * epsilon(1.0_wp) * update_scale
+    if (abs(aimag(change)) > diagonal_tolerance) return
+
+    !Apply d*e_idx^H. The first three complex workspace blocks contain u, v,
+    !and the qr1up work vector; real_work stores the rotation cosines.
+    do i = 1, matrix_n
+      self%update_work(i) = delta_h(i) - &
+        cmplx(self%shift, 0.0_wp, kind=wp) * delta_s(i)
+      self%update_work(matrix_n + i) = &
+        cmplx(0.0_wp, 0.0_wp, kind=wp)
+    end do
+    self%update_work(idx) = &
+      cmplx(real(self%update_work(idx), wp), 0.0_wp, kind=wp)
+    self%update_work(matrix_n + idx) = &
+      cmplx(1.0_wp, 0.0_wp, kind=wp)
+    call qr1up(matrix_n, matrix_n, matrix_n, self%q, self%capacity, &
+               self%r, self%capacity, self%update_work(1:matrix_n), &
+               self%update_work(matrix_n + 1:2 * matrix_n), &
+               self%update_work(2 * matrix_n + 1:3 * matrix_n), &
+               self%real_work(1:matrix_n))
+
+    !Apply e_idx*(d-d(idx)*e_idx)^H. Re-form d after the destructive first
+    !call and set its diagonal component to exact complex zero.
+    do i = 1, matrix_n
+      self%update_work(i) = cmplx(0.0_wp, 0.0_wp, kind=wp)
+      self%update_work(matrix_n + i) = delta_h(i) - &
+        cmplx(self%shift, 0.0_wp, kind=wp) * delta_s(i)
+    end do
+    self%update_work(idx) = cmplx(1.0_wp, 0.0_wp, kind=wp)
+    self%update_work(matrix_n + idx) = &
+      cmplx(0.0_wp, 0.0_wp, kind=wp)
+    call qr1up(matrix_n, matrix_n, matrix_n, self%q, self%capacity, &
+               self%r, self%capacity, self%update_work(1:matrix_n), &
+               self%update_work(matrix_n + 1:2 * matrix_n), &
+               self%update_work(2 * matrix_n + 1:3 * matrix_n), &
+               self%real_work(1:matrix_n))
+
+    self%structural_updates = self%structural_updates + 1_int64
+    self%updates_since_fresh = self%updates_since_fresh + 1_int64
+    info = QR_SUCCESS
   end subroutine complex_replace_symmetric
 
   !Subroutine real_append_symmetric is the reserved interface for increasing
