@@ -16,8 +16,8 @@ H - sigma*S = Q*R,
 ```
 
 with explicit orthogonal/unitary `Q` and upper-triangular `R`. The explicit
-factors support shifted inverse iteration and are intended to support later
-row/column QR updates without recomputing a full factorization.
+factors support shifted inverse iteration and row/column QR updates without
+recomputing a full factorization.
 
 The library is deliberately independent of MPI. Do not introduce MPI modules,
 communicators, collectives, compiler wrappers, conditional MPI branches, or
@@ -32,16 +32,13 @@ The following operations are implemented for both `qr_real_state` and
 - `factorize_fresh(H, S, shift, info)`;
 - `replace_symmetric(idx, delta_h, delta_s, info)`;
 - `append_symmetric(h_column, s_column, info)`;
+- `delete_symmetric(idx, info)`;
 - `solve(S, v_initial, x, lambda, tol, max_iter, norm_mode, rel_acc, num_iter,
   info)`.
 
-The following public interfaces are present but remain version 0.1 stubs:
-
-- `delete_symmetric`.
-
-Stubs must return `QR_ERR_NOT_IMPLEMENTED` and leave factors, dimensions,
-validity, shifts, and counters unchanged. Do not make a stub partially mutate
-state.
+Deletion from an order-one factorization is invalid because the library does
+not represent a valid order-zero factorization. Rejected structural operations
+leave factors, dimensions, validity, shifts, and counters unchanged.
 
 ## Repository layout and source ownership
 
@@ -52,7 +49,8 @@ state.
 - `test/test_support.f90` contains assertions and precision-generic reference
   norms shared by the independent test executables.
 - `test/test_initialization.f90`, `test/test_factorization.f90`,
-  `test/test_replacement.f90`, `test/test_append.f90`, and
+  `test/test_replacement.f90`, `test/test_append.f90`,
+  `test/test_delete.f90`, and
   `test/test_inverse_iteration.f90` contain white-box state-contract and
   analytical numerical tests grouped by behavior.
 - `test/differential/` contains the optional data-driven comparison harness
@@ -132,8 +130,8 @@ Caller ownership rules are strict:
   independent states.
 
 Initialization allocates all normal operating storage. Fresh factorization,
-inverse iteration, and future structural updates must not allocate within
-their numerical loops.
+inverse iteration, and structural updates must not allocate within their
+numerical loops.
 
 ## Fresh QR factorization
 
@@ -266,10 +264,11 @@ The implementation uses two rank-one `qr1up` operations. Caller vectors are
 copied to state-owned workspace first because qrupdate routines may modify
 vector arguments.
 
-Append at `n+1` uses `qrinc` followed by `qrinr`. Deletion is intended to use
-`qrdec` followed by `qrder`. Complex operations must preserve Hermitian
-symmetry and must reject a diagonal change with an imaginary part larger than a
-precision-scaled tolerance.
+Append at `n+1` uses `qrinc` followed by `qrinr`. Deletion uses `qrdec` followed
+by `qrder`, rejects deletion from order one, and clears newly inactive factor
+storage. Complex operations must preserve Hermitian symmetry and must reject a
+diagonal change with an imaginary part larger than a precision-scaled
+tolerance.
 
 Increment `structural_updates` and `updates_since_fresh` only after a complete,
 successful structural operation. Never count a rejected or partially failed

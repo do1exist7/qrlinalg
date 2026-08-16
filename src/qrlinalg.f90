@@ -24,7 +24,7 @@
 module qrlinalg
   use iso_fortran_env, only: int64
   use wp_def, only: wp
-  use qrupdate, only: qr1up, qrinc, qrinr
+  use qrupdate, only: qr1up, qrinc, qrdec, qrinr, qrder
   implicit none
   private
 
@@ -1036,51 +1036,131 @@ contains
     info = QR_SUCCESS
   end subroutine complex_append_symmetric
 
-  !Subroutine real_delete_symmetric is the reserved interface for deleting row
-  !idx and column idx from an active real symmetric factorization. A complete
-  !implementation removes the selected column with qrdec, removes the matching
-  !row with qrder, and decreases the active order after both operations
-  !succeed.
+  !Subroutine real_delete_symmetric removes row idx and column idx from an
+  !active real symmetric factorization. If P deletes component idx, the new
+  !represented matrix is the principal submatrix
+  !
+  !                       M_new = P^T*M*P .
+  !
+  !qrdec first removes column idx from the n by n factorization, leaving an
+  !n by n-1 factorization. qrder then removes row idx and restores square
+  !factors of order n-1. Deleting the only active row and column is rejected:
+  !the library has no valid order-zero factorization, and append_symmetric
+  !requires an existing valid factorization.
   !
   !  Input parameter:
   !    idx  - One-based row and column index in the active range 1:self%n.
   !
   !  Input/output parameter:
-  !    self - The QR state from which the row and column are to be removed.
+  !    self - A valid QR state of order at least two. On success n decreases
+  !           by one, valid, capacity, and shift are preserved, Q and R
+  !           represent the requested principal submatrix, and both update
+  !           counters increase by one.
   !
   !  Output parameter:
-  !    info - QR_ERR_NOT_IMPLEMENTED in version 0.1.
+  !    info - QR_SUCCESS when both deletions complete;
+  !           QR_ERR_INVALID_ARGUMENT when self is invalid, self%n is not at
+  !           least two, idx is outside 1:self%n, or required factor/work
+  !           storage is absent or too small.
   !
-  !The present stub leaves n, the factors, and both counters unchanged.
+  !All recoverable failures precede qrdec and preserve the complete state.
+  !The validated qrdec and qrder kernels have no numerical failure result.
+  !After success the now-inactive trailing row and column of Q and R are
+  !cleared, preventing stale factor data from being exposed by later capacity
+  !growth or white-box inspection. No allocation is performed.
   subroutine real_delete_symmetric(self, idx, info)
     class(qr_real_state), intent(inout) :: self
     integer, intent(in) :: idx
     integer, intent(out) :: info
+    integer :: i, new_n, old_n
 
-    info = QR_ERR_NOT_IMPLEMENTED
+    info = QR_ERR_INVALID_ARGUMENT
+    if (.not. self%valid .or. self%n < 2) return
+    if (.not. allocated(self%q) .or. .not. allocated(self%r)) return
+    if (.not. allocated(self%update_work)) return
+    old_n = self%n
+    if (idx < 1 .or. idx > old_n) return
+    if (size(self%q, 1) < self%capacity .or. &
+        size(self%q, 2) < self%capacity) return
+    if (size(self%r, 1) < self%capacity .or. &
+        size(self%r, 2) < self%capacity) return
+    if (size(self%update_work) < 2 * old_n) return
+    new_n = old_n - 1
+
+    !Remove the selected column while retaining all n rows, then remove the
+    !row with the same physical index from the rectangular factorization.
+    call qrdec(old_n, old_n, old_n, self%q, self%capacity, self%r, &
+               self%capacity, idx, self%update_work(1:old_n))
+    call qrder(old_n, new_n, self%q, self%capacity, self%r, &
+               self%capacity, idx, self%update_work(1:2 * old_n))
+
+    do i = 1, self%capacity
+      self%q(old_n,i) = 0.0_wp
+      self%q(i,old_n) = 0.0_wp
+      self%r(old_n,i) = 0.0_wp
+      self%r(i,old_n) = 0.0_wp
+    end do
+    self%n = new_n
+    self%structural_updates = self%structural_updates + 1_int64
+    self%updates_since_fresh = self%updates_since_fresh + 1_int64
+    info = QR_SUCCESS
   end subroutine real_delete_symmetric
 
   !Subroutine complex_delete_symmetric is the Hermitian counterpart of
-  !real_delete_symmetric. The complete operation uses complex qrdec and qrder
-  !kernels and preserves an explicit unitary Q and upper-triangular R for the
-  !remaining principal submatrix.
+  !real_delete_symmetric. Deletion introduces no numerical values and therefore
+  !requires no diagonal-reality check or caller vector. qrdec and qrder preserve
+  !the complex arithmetic and unitary Q of the retained principal submatrix.
   !
   !  Input parameter:
   !    idx  - One-based row and column index in the active range 1:self%n.
   !
   !  Input/output parameter:
-  !    self - The complex QR state from which the row and column are removed.
+  !    self - Complex QR state to update. Successful metadata, counter, and
+  !           inactive-storage changes are the same as for the real routine.
   !
   !  Output parameter:
-  !    info - QR_ERR_NOT_IMPLEMENTED in version 0.1.
+  !    info - QR_SUCCESS on completion or QR_ERR_INVALID_ARGUMENT under the
+  !           validation conditions documented for real_delete_symmetric.
   !
-  !The present stub leaves the complete state unchanged.
+  !All validation is completed before factor storage is modified. The routine
+  !allocates no memory and rejects deletion from an order-one state.
   subroutine complex_delete_symmetric(self, idx, info)
     class(qr_complex_state), intent(inout) :: self
     integer, intent(in) :: idx
     integer, intent(out) :: info
+    integer :: i, new_n, old_n
 
-    info = QR_ERR_NOT_IMPLEMENTED
+    info = QR_ERR_INVALID_ARGUMENT
+    if (.not. self%valid .or. self%n < 2) return
+    if (.not. allocated(self%q) .or. .not. allocated(self%r)) return
+    if (.not. allocated(self%update_work)) return
+    if (.not. allocated(self%real_work)) return
+    old_n = self%n
+    if (idx < 1 .or. idx > old_n) return
+    if (size(self%q, 1) < self%capacity .or. &
+        size(self%q, 2) < self%capacity) return
+    if (size(self%r, 1) < self%capacity .or. &
+        size(self%r, 2) < self%capacity) return
+    if (size(self%update_work) < old_n) return
+    if (size(self%real_work) < old_n) return
+    new_n = old_n - 1
+
+    call qrdec(old_n, old_n, old_n, self%q, self%capacity, self%r, &
+               self%capacity, idx, self%real_work(1:old_n))
+    call qrder(old_n, new_n, self%q, self%capacity, self%r, &
+               self%capacity, idx, self%update_work(1:old_n), &
+               self%real_work(1:old_n))
+
+    do i = 1, self%capacity
+      self%q(old_n,i) = cmplx(0.0_wp, 0.0_wp, kind=wp)
+      self%q(i,old_n) = cmplx(0.0_wp, 0.0_wp, kind=wp)
+      self%r(old_n,i) = cmplx(0.0_wp, 0.0_wp, kind=wp)
+      self%r(i,old_n) = cmplx(0.0_wp, 0.0_wp, kind=wp)
+    end do
+    self%n = new_n
+    self%structural_updates = self%structural_updates + 1_int64
+    self%updates_since_fresh = self%updates_since_fresh + 1_int64
+    info = QR_SUCCESS
   end subroutine complex_delete_symmetric
 
   !Subroutine real_solve finds one eigenvalue and its eigenvector for the real

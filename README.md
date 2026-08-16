@@ -3,9 +3,8 @@
 `qrlinalg` is the serial QR-state layer intended for ECGPACK generalized
 symmetric and Hermitian eigenproblems. Version 0.1 implements initialization
 and fresh real/complex QR factorization plus generalized inverse iteration.
-Symmetric/Hermitian row-and-column replacement and end-appending update the
-stored factors in place. Deletion remains an explicit stub that returns
-`QR_ERR_NOT_IMPLEMENTED`.
+Symmetric/Hermitian row-and-column replacement, end-appending, and principal-
+submatrix deletion update the stored factors in place.
 
 The project vendors the generic-precision `qrupdate-ng` sources under
 `src/qrupdate/`, copied from `linalg/src/qrupdate`. That directory records the
@@ -65,7 +64,7 @@ individual executable can be rerun directly, for example:
 ./build/test-wp8/test_replacement
 ```
 
-The five independently reported executables cover:
+The six independently reported executables cover:
 
 - `test_initialization`: invalid initialization, state metadata, and every
   state-owned workspace extent;
@@ -78,6 +77,10 @@ The five independently reported executables cover:
 - `test_append`: repeated real symmetric and complex Hermitian order increases
   through full state capacity, with analytical reconstruction after every
   append and checks of diagonal, ownership, counter, and rejection contracts;
+- `test_delete`: real and complex append/delete round trips followed by middle,
+  first, and last principal-submatrix deletions down to order one, checking
+  reconstruction, factor quality, counters, inactive storage, and rejection
+  contracts after every operation;
 - `test_inverse_iteration`: noncommuting generalized eigenproblems with known
   eigensystems, all normalization modes, both stopping rules, nonconvergence
   with a usable approximation, and recoverable error paths.
@@ -203,9 +206,9 @@ Complex replacement preserves Hermitian symmetry and requires a real diagonal
 change within a precision-scaled tolerance. Append inserts the shifted column
 at `n+1` with `qrinc`, then inserts its symmetric or conjugate-transposed row
 with `qrinr`. Complex H and S diagonal inputs must each be real within a
-precision-scaled tolerance. Deletion will use `qrdec` then `qrder`. Because
-QR-update routines modify vector arguments, caller inputs are copied into
-state-owned workspace.
+precision-scaled tolerance. Deletion removes the selected column with `qrdec`
+and then the corresponding row with `qrder`. Because QR-update routines modify
+vector arguments, caller inputs are copied into state-owned workspace.
 
 ## API status
 
@@ -257,8 +260,13 @@ stored factors without fresh factorization, and increments both update counters
 once. It rejects an unfactorized or full-capacity state, incorrect extents, and
 non-real complex diagonal inputs without changing the state or caller arrays.
 
-In v0.1 only deletion returns `QR_ERR_NOT_IMPLEMENTED`. Recoverable errors
-never use `error stop`, and rejected updates do not increment counters.
+`delete_symmetric` removes the principal row and column at a one-based active
+index and decreases the order by one. It rejects invalid indices,
+unfactorized states, and deletion from order one without changing the state.
+The order-one restriction keeps every valid factorization nonempty.
+
+Recoverable errors never use `error stop`, and rejected updates do not
+increment counters.
 
 The mutable states are not thread-safe. Threads or tasks must use independent
 states. They contain no MPI communicator or branch and should not be replicated
