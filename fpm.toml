@@ -1,0 +1,16 @@
+name = "qrlinalg"
+version = "0.1.0"
+license = "GPL-3.0-or-later"
+
+[build]
+auto-executables = false
+auto-examples = false
+auto-tests = false
+
+[library]
+source-dir = "src"
+
+[preprocess.cpp]
+suffixes = ["f90"]
+directories = ["src"]
+macros = ["QRLINALG_WP=8"]
