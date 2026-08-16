@@ -24,7 +24,7 @@
 module qrlinalg
   use iso_fortran_env, only: int64
   use wp_def, only: wp
-  use qrupdate, only: qr1up
+  use qrupdate, only: qr1up, qrinc, qrinr
   implicit none
   private
 
@@ -859,38 +859,102 @@ contains
     info = QR_SUCCESS
   end subroutine complex_replace_symmetric
 
-  !Subroutine real_append_symmetric is the reserved interface for increasing
-  !the active real symmetric problem from order n to n+1. h_column and
-  !s_column contain the new physical columns through the new diagonal element.
-  !The column represented by the shifted QR factorization is
-  !h_column-self%shift*s_column. A complete implementation applies qrinc for
-  !the new column and qrinr for the corresponding symmetric row, using only
-  !the workspace allocated for the state.
+  !Subroutine real_append_symmetric increases the active real symmetric
+  !problem from order n to n+1 without recomputing a fresh factorization.
+  !h_column and s_column contain the complete new physical columns, including
+  !their diagonal elements. The column of the represented shifted matrix is
+  !
+  !             shifted_column = h_column-self%shift*s_column.
+  !
+  !qrinc first inserts shifted_column(1:n) as column n+1 of the existing
+  !n-row factorization. This produces factors for an n by n+1 matrix. qrinr
+  !then inserts the symmetric row
+  !
+  !             [ shifted_column(1:n), shifted_column(n+1) ]
+  !
+  !at row n+1 and restores a square factorization of order n+1. qrinr modifies
+  !its row-vector argument, so the complete row is formed in state-owned
+  !workspace and both caller arrays remain unchanged.
   !
   !  Input parameters:
-  !    h_column - New H column of length self%n+1.
-  !    s_column - New S column of length self%n+1.
+  !    h_column - New H column of length self%n+1. Elements 1:self%n
+  !               determine the symmetric off-diagonal row by transposition;
+  !               the final element is the new diagonal.
+  !    s_column - Corresponding new S column with the same extent and storage
+  !               convention.
   !
   !  Input/output parameter:
-  !    self     - The QR state whose active order is to be increased.
+  !    self     - A valid QR state. On success n increases by one, Q and R
+  !               represent the expanded shifted matrix, valid, capacity, and
+  !               shift are preserved, and both structural-update counters
+  !               increase by one.
   !
   !  Output parameter:
-  !    info     - QR_ERR_NOT_IMPLEMENTED in version 0.1.
+  !    info     - QR_SUCCESS when both insertions complete;
+  !               QR_ERR_INVALID_ARGUMENT when self has no valid factors,
+  !               active order has reached capacity, either input length is
+  !               not self%n+1, or required factor/work storage is absent or
+  !               too small.
   !
-  !The present stub leaves n, the factors, and both counters unchanged.
+  !All recoverable failures are detected before qrinc modifies the factors and
+  !therefore preserve the complete state. The validated qrinc and qrinr calls
+  !have no numerical failure result. The operation allocates no memory.
   subroutine real_append_symmetric(self, h_column, s_column, info)
     class(qr_real_state), intent(inout) :: self
     real(wp), intent(in) :: h_column(:), s_column(:)
     integer, intent(out) :: info
+    integer :: i, new_n, old_n
 
-    info = QR_ERR_NOT_IMPLEMENTED
+    info = QR_ERR_INVALID_ARGUMENT
+    if (.not. self%valid .or. self%n <= 0) return
+    if (.not. allocated(self%q) .or. .not. allocated(self%r)) return
+    if (.not. allocated(self%update_work)) return
+    old_n = self%n
+    if (old_n >= self%capacity) return
+    new_n = old_n + 1
+    if (size(h_column) /= new_n .or. size(s_column) /= new_n) return
+    if (size(self%q, 1) < self%capacity .or. &
+        size(self%q, 2) < self%capacity) return
+    if (size(self%r, 1) < self%capacity .or. &
+        size(self%r, 2) < self%capacity) return
+    if (size(self%update_work) < 2 * new_n) return
+
+    !Insert only the off-diagonal part of the new column. The diagonal belongs
+    !to the bottom row, which does not exist until qrinr is called.
+    do i = 1, old_n
+      self%update_work(i) = h_column(i) - self%shift * s_column(i)
+    end do
+    call qrinc(old_n, old_n, old_n, self%q, self%capacity, self%r, &
+               self%capacity, new_n, self%update_work(1:old_n), &
+               self%update_work(new_n:2 * old_n))
+
+    !Form the complete symmetric bottom row in workspace disjoint from the
+    !rotation cosines written by qrinr.
+    do i = 1, new_n
+      self%update_work(i) = h_column(i) - self%shift * s_column(i)
+    end do
+    call qrinr(old_n, new_n, self%q, self%capacity, self%r, &
+               self%capacity, new_n, self%update_work(1:new_n), &
+               self%update_work(new_n + 1:2 * new_n))
+
+    self%n = new_n
+    self%structural_updates = self%structural_updates + 1_int64
+    self%updates_since_fresh = self%updates_since_fresh + 1_int64
+    info = QR_SUCCESS
   end subroutine real_append_symmetric
 
   !Subroutine complex_append_symmetric is the Hermitian counterpart of
-  !real_append_symmetric. The supplied columns determine the new column and,
-  !by conjugation, the new row of H-self%shift*S. Their final elements are
-  !required to be real to a working-precision tolerance. The numerical
-  !path applies qrinc followed by qrinr without allocating memory.
+  !real_append_symmetric. The supplied columns determine the new shifted
+  !column and, by conjugation, the new bottom row. Because H and S are each
+  !Hermitian, both supplied diagonal elements must be real. They are accepted
+  !only when
+  !
+  !  abs(aimag(column(n+1))) <=
+  !      100*epsilon(1.0_wp)*max(1,maxval(abs(column))).
+  !
+  !Accepted roundoff-sized imaginary diagonal parts are discarded separately
+  !before H-shift*S is formed. qrinc inserts the off-diagonal shifted column;
+  !qrinr inserts its conjugate-transposed row and the real shifted diagonal.
   !
   !  Input parameters:
   !    h_column - New complex H column of length self%n+1, including the real
@@ -899,18 +963,77 @@ contains
   !               diagonal element.
   !
   !  Input/output parameter:
-  !    self     - The complex QR state whose order is to be increased.
+  !    self     - The complex QR state whose order is to be increased. State
+  !               changes on success are the same as for the real routine.
   !
   !  Output parameter:
-  !    info     - QR_ERR_NOT_IMPLEMENTED in version 0.1.
+  !    info     - QR_SUCCESS when the Hermitian append completes;
+  !               QR_ERR_INVALID_ARGUMENT under the validation conditions of
+  !               real_append_symmetric or when either physical diagonal has
+  !               an imaginary part larger than its tolerance above.
   !
-  !The present stub leaves the complete state unchanged.
+  !All rejection paths precede factor modification and preserve the complete
+  !state. Caller arrays are not modified, and no allocation is performed.
   subroutine complex_append_symmetric(self, h_column, s_column, info)
     class(qr_complex_state), intent(inout) :: self
     complex(wp), intent(in) :: h_column(:), s_column(:)
     integer, intent(out) :: info
+    complex(wp) :: shifted_diagonal
+    real(wp) :: h_diagonal_tolerance, h_scale
+    real(wp) :: s_diagonal_tolerance, s_scale
+    integer :: i, new_n, old_n
 
-    info = QR_ERR_NOT_IMPLEMENTED
+    info = QR_ERR_INVALID_ARGUMENT
+    if (.not. self%valid .or. self%n <= 0) return
+    if (.not. allocated(self%q) .or. .not. allocated(self%r)) return
+    if (.not. allocated(self%update_work)) return
+    if (.not. allocated(self%real_work)) return
+    old_n = self%n
+    if (old_n >= self%capacity) return
+    new_n = old_n + 1
+    if (size(h_column) /= new_n .or. size(s_column) /= new_n) return
+    if (size(self%q, 1) < self%capacity .or. &
+        size(self%q, 2) < self%capacity) return
+    if (size(self%r, 1) < self%capacity .or. &
+        size(self%r, 2) < self%capacity) return
+    if (size(self%update_work) < new_n) return
+    if (size(self%real_work) < old_n) return
+
+    !Hermitian diagonals are properties of H and S separately; cancellation
+    !between their imaginary parts must not make two invalid inputs acceptable.
+    h_scale = max(1.0_wp, maxval(abs(h_column)))
+    s_scale = max(1.0_wp, maxval(abs(s_column)))
+    h_diagonal_tolerance = 100.0_wp * epsilon(1.0_wp) * h_scale
+    s_diagonal_tolerance = 100.0_wp * epsilon(1.0_wp) * s_scale
+    if (abs(aimag(h_column(new_n))) > h_diagonal_tolerance) return
+    if (abs(aimag(s_column(new_n))) > s_diagonal_tolerance) return
+
+    do i = 1, old_n
+      self%update_work(i) = h_column(i) - &
+        cmplx(self%shift, 0.0_wp, kind=wp) * s_column(i)
+    end do
+    call qrinc(old_n, old_n, old_n, self%q, self%capacity, self%r, &
+               self%capacity, new_n, self%update_work(1:old_n), &
+               self%real_work(1:old_n))
+
+    !The first n row elements are conjugates of the supplied shifted column.
+    !Construct the diagonal from separately real H and S values so the expanded
+    !matrix is exactly Hermitian rather than Hermitian only within tolerance.
+    do i = 1, old_n
+      self%update_work(i) = conjg(h_column(i) - &
+        cmplx(self%shift, 0.0_wp, kind=wp) * s_column(i))
+    end do
+    shifted_diagonal = cmplx(real(h_column(new_n), wp) - &
+      self%shift * real(s_column(new_n), wp), 0.0_wp, kind=wp)
+    self%update_work(new_n) = shifted_diagonal
+    call qrinr(old_n, new_n, self%q, self%capacity, self%r, &
+               self%capacity, new_n, self%update_work(1:new_n), &
+               self%real_work(1:old_n))
+
+    self%n = new_n
+    self%structural_updates = self%structural_updates + 1_int64
+    self%updates_since_fresh = self%updates_since_fresh + 1_int64
+    info = QR_SUCCESS
   end subroutine complex_append_symmetric
 
   !Subroutine real_delete_symmetric is the reserved interface for deleting row

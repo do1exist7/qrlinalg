@@ -3,8 +3,8 @@
 `qrlinalg` is the serial QR-state layer intended for ECGPACK generalized
 symmetric and Hermitian eigenproblems. Version 0.1 implements initialization
 and fresh real/complex QR factorization plus generalized inverse iteration.
-Symmetric/Hermitian row-and-column replacement updates the stored factors in
-place. Append and deletion remain explicit stubs that return
+Symmetric/Hermitian row-and-column replacement and end-appending update the
+stored factors in place. Deletion remains an explicit stub that returns
 `QR_ERR_NOT_IMPLEMENTED`.
 
 The project vendors the generic-precision `qrupdate-ng` sources under
@@ -65,7 +65,7 @@ individual executable can be rerun directly, for example:
 ./build/test-wp8/test_replacement
 ```
 
-The four independently reported executables cover:
+The five independently reported executables cover:
 
 - `test_initialization`: invalid initialization, state metadata, and every
   state-owned workspace extent;
@@ -75,6 +75,9 @@ The four independently reported executables cover:
 - `test_replacement`: 100 successive real symmetric updates and 100 successive
   complex Hermitian updates, checking analytical reconstruction and factor
   quality after every update, caller ownership, counters, and rejected updates;
+- `test_append`: repeated real symmetric and complex Hermitian order increases
+  through full state capacity, with analytical reconstruction after every
+  append and checks of diagonal, ownership, counter, and rejection contracts;
 - `test_inverse_iteration`: noncommuting generalized eigenproblems with known
   eigensystems, all normalization modes, both stopping rules, nonconvergence
   with a usable approximation, and recoverable error paths.
@@ -188,19 +191,21 @@ A shift change is the dense update `-delta_shift*S`, so it invalidates the
 existing factors and requires a fresh factorization.
 
 For replacement at index `i`, the physical change is
-`d = delta_h - shift*delta_s`. The future implementation will apply two
-`qr1up` operations without double-counting the diagonal:
+`d = delta_h - shift*delta_s`. The implementation applies two `qr1up`
+operations without double-counting the diagonal:
 
 ```text
 d*e_i**T + e_i*(d-d(i)*e_i)**T       real
 d*e_i**H + e_i*(d-d(i)*e_i)**H       complex
 ```
 
-Complex replacement must preserve Hermitian symmetry and require a real
-diagonal change within a precision-scaled tolerance. Append means insertion at
-`n+1` and will use `qrinc` then `qrinr`; deletion will use `qrdec` then `qrder`.
-Because QR-update routines modify vector arguments, caller inputs will first be
-copied into state-owned workspace.
+Complex replacement preserves Hermitian symmetry and requires a real diagonal
+change within a precision-scaled tolerance. Append inserts the shifted column
+at `n+1` with `qrinc`, then inserts its symmetric or conjugate-transposed row
+with `qrinr`. Complex H and S diagonal inputs must each be real within a
+precision-scaled tolerance. Deletion will use `qrdec` then `qrder`. Because
+QR-update routines modify vector arguments, caller inputs are copied into
+state-owned workspace.
 
 ## API status
 
@@ -247,8 +252,13 @@ order and increments both update counters once after the complete symmetric or
 Hermitian operation. A complex diagonal change must be real within a
 precision-scaled tolerance. Invalid calls preserve the complete state.
 
-In v0.1 only append and deletion return `QR_ERR_NOT_IMPLEMENTED`. Recoverable
-errors never use `error stop`, and rejected updates do not increment counters.
+`append_symmetric` accepts new H and S columns of length `n+1`, expands the
+stored factors without fresh factorization, and increments both update counters
+once. It rejects an unfactorized or full-capacity state, incorrect extents, and
+non-real complex diagonal inputs without changing the state or caller arrays.
+
+In v0.1 only deletion returns `QR_ERR_NOT_IMPLEMENTED`. Recoverable errors
+never use `error stop`, and rejected updates do not increment counters.
 
 The mutable states are not thread-safe. Threads or tasks must use independent
 states. They contain no MPI communicator or branch and should not be replicated

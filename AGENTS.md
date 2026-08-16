@@ -31,12 +31,12 @@ The following operations are implemented for both `qr_real_state` and
 - `initialize(max_n, info)`;
 - `factorize_fresh(H, S, shift, info)`;
 - `replace_symmetric(idx, delta_h, delta_s, info)`;
+- `append_symmetric(h_column, s_column, info)`;
 - `solve(S, v_initial, x, lambda, tol, max_iter, norm_mode, rel_acc, num_iter,
   info)`.
 
 The following public interfaces are present but remain version 0.1 stubs:
 
-- `append_symmetric`;
 - `delete_symmetric`.
 
 Stubs must return `QR_ERR_NOT_IMPLEMENTED` and leave factors, dimensions,
@@ -51,7 +51,8 @@ state.
   implementation. It was imported from the neighboring linalg project.
 - `test/test_support.f90` contains assertions and precision-generic reference
   norms shared by the independent test executables.
-- `test/test_initialization.f90`, `test/test_factorization.f90`, and
+- `test/test_initialization.f90`, `test/test_factorization.f90`,
+  `test/test_replacement.f90`, `test/test_append.f90`, and
   `test/test_inverse_iteration.f90` contain white-box state-contract and
   analytical numerical tests grouped by behavior.
 - `test/differential/` contains the optional data-driven comparison harness
@@ -265,10 +266,10 @@ The implementation uses two rank-one `qr1up` operations. Caller vectors are
 copied to state-owned workspace first because qrupdate routines may modify
 vector arguments.
 
-Append at `n+1` is intended to use `qrinc` followed by `qrinr`. Deletion is
-intended to use `qrdec` followed by `qrder`. Complex operations must preserve
-Hermitian symmetry and must reject a diagonal change with an imaginary part
-larger than a precision-scaled tolerance.
+Append at `n+1` uses `qrinc` followed by `qrinr`. Deletion is intended to use
+`qrdec` followed by `qrder`. Complex operations must preserve Hermitian
+symmetry and must reject a diagonal change with an imaginary part larger than a
+precision-scaled tolerance.
 
 Increment `structural_updates` and `updates_since_fresh` only after a complete,
 successful structural operation. Never count a rejected or partially failed
@@ -409,6 +410,8 @@ The permanent tests must continue to cover:
 - orthogonality/unitarity and triangularity;
 - preservation of caller matrices and vectors;
 - state validity, shifts, dimensions, and counters;
+- repeated real and complex replacement and append updates, with analytical
+  reconstruction checked after every operation;
 - real and complex inverse iteration on analytical generalized eigenproblems;
 - noncommuting analytical `H` and `S`, not only diagonal or simultaneously
   diagonalizable trivial cases;
