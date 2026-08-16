@@ -20,15 +20,19 @@ module qrlinalg
     !! The requested numerical operation is a deliberate version 0.1 stub.
   integer, parameter, public :: QR_ERR_FACTORIZATION = 4
     !! A bundled LAPACK factorization or workspace query reported an error.
+  integer, parameter, public :: QR_ERR_SINGULAR = 5
+    !! The stored shifted factorization is singular or numerically unusable.
+  integer, parameter, public :: QR_ERR_NO_CONVERGENCE = 6
+    !! Inverse iteration reached max_iter before satisfying the tolerance.
 
   public :: wp
   public :: qr_real_state
   public :: qr_complex_state
 
-  ! Explicit interfaces for the traditional external LAPACK routines in
-  ! src/qrupdate/LAPACK.f. These declarations provide compile-time checking;
-  ! the linker resolves the external symbols from qrupdate_lapack.o. Both the
-  ! declarations and implementations import the same build-selected wp_def.
+  ! Explicit interfaces for the traditional external BLAS/LAPACK routines in
+  ! src/qrupdate. These declarations provide compile-time checking; the linker
+  ! resolves the external symbols from the bundled objects. Both declarations
+  ! and implementations import the same build-selected wp_def.
   interface
     ! Compute a compact real QR factorization in A and TAU.
     subroutine dgeqrf(m, n, a, lda, tau, work, lwork, info)
@@ -69,6 +73,64 @@ module qrlinalg
       complex(wp), intent(inout) :: work(*)
       integer, intent(out) :: info
     end subroutine zungqr
+
+    ! Multiply a real symmetric matrix by a vector using one stored triangle.
+    subroutine dsymv(uplo, n, alpha, a, lda, x, incx, beta, y, incy)
+      import wp
+      character(len=1), intent(in) :: uplo
+      integer, intent(in) :: n, lda, incx, incy
+      real(wp), intent(in) :: alpha, beta
+      real(wp), intent(in) :: a(lda, *), x(*)
+      real(wp), intent(inout) :: y(*)
+    end subroutine dsymv
+
+    ! Multiply a complex Hermitian matrix by a vector using one triangle.
+    subroutine zhemv(uplo, n, alpha, a, lda, x, incx, beta, y, incy)
+      import wp
+      character(len=1), intent(in) :: uplo
+      integer, intent(in) :: n, lda, incx, incy
+      complex(wp), intent(in) :: alpha, beta
+      complex(wp), intent(in) :: a(lda, *), x(*)
+      complex(wp), intent(inout) :: y(*)
+    end subroutine zhemv
+
+    ! General real matrix-vector product, used for Q and R applications.
+    subroutine dgemv(trans, m, n, alpha, a, lda, x, incx, beta, y, incy)
+      import wp
+      character(len=1), intent(in) :: trans
+      integer, intent(in) :: m, n, lda, incx, incy
+      real(wp), intent(in) :: alpha, beta
+      real(wp), intent(in) :: a(lda, *), x(*)
+      real(wp), intent(inout) :: y(*)
+    end subroutine dgemv
+
+    ! General complex matrix-vector product, including conjugate transpose.
+    subroutine zgemv(trans, m, n, alpha, a, lda, x, incx, beta, y, incy)
+      import wp
+      character(len=1), intent(in) :: trans
+      integer, intent(in) :: m, n, lda, incx, incy
+      complex(wp), intent(in) :: alpha, beta
+      complex(wp), intent(in) :: a(lda, *), x(*)
+      complex(wp), intent(inout) :: y(*)
+    end subroutine zgemv
+
+    ! Solve an upper-triangular real system in place.
+    subroutine dtrsv(uplo, trans, diag, n, a, lda, x, incx)
+      import wp
+      character(len=1), intent(in) :: uplo, trans, diag
+      integer, intent(in) :: n, lda, incx
+      real(wp), intent(in) :: a(lda, *)
+      real(wp), intent(inout) :: x(*)
+    end subroutine dtrsv
+
+    ! Solve an upper-triangular complex system in place.
+    subroutine ztrsv(uplo, trans, diag, n, a, lda, x, incx)
+      import wp
+      character(len=1), intent(in) :: uplo, trans, diag
+      integer, intent(in) :: n, lda, incx
+      complex(wp), intent(in) :: a(lda, *)
+      complex(wp), intent(inout) :: x(*)
+    end subroutine ztrsv
   end interface
 
   type, public :: qr_real_state
@@ -651,26 +713,29 @@ contains
 
   !> Perform real generalized inverse iteration using the stored QR factors.
   !!
-  !! Each future iteration computes `w=S*v`, `y=transpose(Q)*w`, and solves
-  !! `R*x=y`; the final eigenvalue uses the shifted Rayleigh quotient. `tol`,
-  !! `max_iter`, and `norm_mode` control convergence and normalization. In
-  !! version 0.1 no iteration is attempted: `x`, `lambda`, `rel_acc`, and
-  !! `num_iter` are set to zero and `info` is `QR_ERR_NOT_IMPLEMENTED`.
+  !! This is the GSEPIIS inverse iteration expressed through the state's QR
+  !! factorization instead of the original LDL^T factorization. Every step
+  !! computes `S*v`, applies `transpose(Q)`, and solves `R*x=y`, which is
+  !! algebraically `(H-shift*S)*x=S*v`. The convergence estimate and stopping
+  !! rules intentionally match GSEPIIS.
   !!
   !! Input parameters:
   !!   s         - Caller-owned symmetric overlap matrix.
   !!   v_initial - Nonzero starting vector; it is not modified.
   !!   tol       - Requested relative convergence tolerance.
   !!   max_iter  - Maximum allowed inverse iterations.
-  !!   norm_mode - Selects S-normalization, Euclidean normalization, or
-  !!               largest-component normalization.
+  !!   norm_mode - Zero selects `x^T*S*x=1`; one selects `x^T*x=1`; every
+  !!               other value retains the iteration scaling in which the
+  !!               largest absolute component is one.
   !!
   !! Output parameters:
-  !!   x         - Computed eigenvector; zeroed by the version 0.1 stub.
-  !!   lambda    - Computed eigenvalue; zeroed by the version 0.1 stub.
-  !!   rel_acc   - Estimated relative accuracy; zeroed by the stub.
-  !!   num_iter  - Number of completed iterations; zeroed by the stub.
-  !!   info      - QR_ERR_NOT_IMPLEMENTED in version 0.1.
+  !!   x         - Computed eigenvector in the requested normalization.
+  !!   lambda    - Shift plus the Rayleigh quotient of the shifted matrix.
+  !!   rel_acc   - Direction-change estimate from the final iteration.
+  !!   num_iter  - Number of completed inverse iterations.
+  !!   info      - QR_SUCCESS, QR_ERR_INVALID_ARGUMENT, QR_ERR_SINGULAR, or
+  !!               QR_ERR_NO_CONVERGENCE. The last status still returns the
+  !!               best eigenpair produced within max_iter.
   subroutine real_solve(self, s, v_initial, x, lambda, tol, max_iter, &
                         norm_mode, rel_acc, num_iter, info)
     class(qr_real_state), intent(inout) :: self
@@ -681,21 +746,144 @@ contains
     integer, intent(in) :: max_iter, norm_mode
     real(wp), intent(out) :: rel_acc
     integer, intent(out) :: num_iter, info
+    integer :: matrix_n
+    real(wp) :: coefficient, current_norm_squared, eigenvector_norm_squared
+    real(wp) :: max_component, norm_of_diff, norm_of_diff_previous
+    real(wp) :: overlap_norm_squared, shifted_numerator
+    logical :: not_converged
 
     x = 0.0_wp
     lambda = 0.0_wp
-    rel_acc = 0.0_wp
+    rel_acc = huge(1.0_wp)
     num_iter = 0
-    info = QR_ERR_NOT_IMPLEMENTED
+    info = QR_ERR_INVALID_ARGUMENT
+
+    ! Validate the complete state and caller dimensions before using a BLAS
+    ! kernel. S is read through its lower triangle, exactly as in GSEPIIS.
+    if (.not. self%valid .or. self%n <= 0) return
+    if (.not. allocated(self%q) .or. .not. allocated(self%r)) return
+    if (.not. allocated(self%solve_work)) return
+    matrix_n = self%n
+    if (size(s, 1) /= matrix_n .or. size(s, 2) /= matrix_n) return
+    if (size(v_initial) /= matrix_n .or. size(x) /= matrix_n) return
+    if (max_iter <= 0) return
+    if (real_norm_squared(matrix_n, v_initial) <= tiny(1.0_wp)) return
+
+    ! Unlike LDL^T factorization, xGEQRF does not report a singular matrix.
+    ! Detect an unusable diagonal before DTRSV can divide by it.
+    if (real_upper_factor_is_singular(self%r, matrix_n)) then
+      info = QR_ERR_SINGULAR
+      return
+    end if
+
+    ! The first half of solve_work is the current iterate v. The second half
+    ! receives Q^T*S*v. Both buffers were allocated by initialize, so solve
+    ! performs no allocation regardless of the number of iterations.
+    self%solve_work(1:matrix_n) = v_initial
+    norm_of_diff_previous = huge(1.0_wp)
+    not_converged = .true.
+
+    do while (not_converged .and. num_iter < max_iter)
+      call dsymv('L', matrix_n, 1.0_wp, s, matrix_n, &
+                 self%solve_work(1:matrix_n), 1, 0.0_wp, x, 1)
+      call dgemv('T', matrix_n, matrix_n, 1.0_wp, self%q, self%capacity, &
+                 x, 1, 0.0_wp, &
+                 self%solve_work(matrix_n + 1:2 * matrix_n), 1)
+      x = self%solve_work(matrix_n + 1:2 * matrix_n)
+      call dtrsv('U', 'N', 'N', matrix_n, self%r, self%capacity, x, 1)
+
+      ! GSEPIIS scales every iterate by its largest absolute component. This
+      ! protects the repeated inverse solves from overflow without changing
+      ! the represented direction.
+      max_component = maxval(abs(x))
+      if (max_component <= tiny(1.0_wp)) then
+        info = QR_ERR_SINGULAR
+        return
+      end if
+      x = x / max_component
+
+      ! Remove the component of x parallel to the previous iterate and use
+      ! the relative Euclidean norm of the remainder as the convergence
+      ! estimate. The coefficient is (x^T*v)/(v^T*v), as in GSEPIIS.
+      current_norm_squared = real_norm_squared( &
+                               matrix_n, self%solve_work(1:matrix_n))
+      if (current_norm_squared <= tiny(1.0_wp)) then
+        info = QR_ERR_SINGULAR
+        return
+      end if
+      coefficient = dot_product(x, self%solve_work(1:matrix_n)) / &
+                    current_norm_squared
+      eigenvector_norm_squared = real_norm_squared(matrix_n, x)
+      norm_of_diff = real_direction_difference( &
+                       matrix_n, x, coefficient, &
+                       self%solve_work(1:matrix_n), &
+                       eigenvector_norm_squared)
+
+      if (tol > 0.0_wp) then
+        if (norm_of_diff <= tol) not_converged = .false.
+      else
+        ! A negative tolerance asks for the most accurate result available,
+        ! but never accepts less accuracy than abs(tol). Requiring the error
+        ! to turn upward forces at least one confirming iteration.
+        if (norm_of_diff > norm_of_diff_previous .and. &
+            norm_of_diff <= abs(tol)) not_converged = .false.
+        norm_of_diff_previous = norm_of_diff
+      end if
+
+      num_iter = num_iter + 1
+      if (not_converged .and. num_iter < max_iter) then
+        self%solve_work(1:matrix_n) = x
+      end if
+    end do
+
+    rel_acc = norm_of_diff
+    if (not_converged) then
+      info = QR_ERR_NO_CONVERGENCE
+    else
+      info = QR_SUCCESS
+    end if
+
+    ! Compute x^T*S*x before reusing the first workspace vector. S is assumed
+    ! positive definite by the generalized symmetric eigenproblem.
+    call dsymv('L', matrix_n, 1.0_wp, s, matrix_n, x, 1, 0.0_wp, &
+               self%solve_work(1:matrix_n), 1)
+    overlap_norm_squared = dot_product(x, &
+                                       self%solve_work(1:matrix_n))
+    if (overlap_norm_squared <= tiny(1.0_wp)) then
+      info = QR_ERR_INVALID_ARGUMENT
+      return
+    end if
+
+    ! The state does not retain M=H-shift*S. Reconstruct only its action on x:
+    ! M*x = Q*(R*x), then add the stored shift to the Rayleigh quotient.
+    call dgemv('N', matrix_n, matrix_n, 1.0_wp, self%r, self%capacity, &
+               x, 1, 0.0_wp, &
+               self%solve_work(matrix_n + 1:2 * matrix_n), 1)
+    call dgemv('N', matrix_n, matrix_n, 1.0_wp, self%q, self%capacity, &
+               self%solve_work(matrix_n + 1:2 * matrix_n), 1, 0.0_wp, &
+               self%solve_work(1:matrix_n), 1)
+    shifted_numerator = dot_product(x, self%solve_work(1:matrix_n))
+    lambda = self%shift + shifted_numerator / overlap_norm_squared
+
+    select case (norm_mode)
+    case (0)
+      x = x / sqrt(overlap_norm_squared)
+    case (1)
+      eigenvector_norm_squared = real_norm_squared(matrix_n, x)
+      if (eigenvector_norm_squared <= tiny(1.0_wp)) then
+        info = QR_ERR_SINGULAR
+        return
+      end if
+      x = x / sqrt(eigenvector_norm_squared)
+    end select
   end subroutine real_solve
 
   !> Perform complex generalized inverse iteration using the stored QR
   !! factors.
   !!
-  !! The future operation uses `conjg(transpose(Q))` for the unitary transform
-  !! and otherwise follows the real solve path. In version 0.1 no iteration is
-  !! attempted: all numeric outputs and `num_iter` are set to zero and `info`
-  !! is `QR_ERR_NOT_IMPLEMENTED`.
+  !! This is the Hermitian GHEPIIS iteration, with `Q^H` and a complex
+  !! triangular solve replacing the original LDL^H solve. Complex phases,
+  !! the convergence estimate, and the normalization rules follow GHEPIIS.
   !!
   !! Parameters have the same roles as in real_solve, with complex Hermitian
   !! S and complex starting/output vectors. The eigenvalue, tolerance, and
@@ -710,12 +898,246 @@ contains
     integer, intent(in) :: max_iter, norm_mode
     real(wp), intent(out) :: rel_acc
     integer, intent(out) :: num_iter, info
+    integer :: matrix_n
+    real(wp) :: current_norm_squared, eigenvector_norm_squared
+    real(wp) :: max_component, norm_of_diff, norm_of_diff_previous
+    real(wp) :: overlap_norm_squared, shifted_numerator
+    complex(wp) :: coefficient
+    complex(wp), parameter :: complex_one = (1.0_wp, 0.0_wp)
+    complex(wp), parameter :: complex_zero = (0.0_wp, 0.0_wp)
+    logical :: not_converged
 
     x = cmplx(0.0_wp, 0.0_wp, kind=wp)
     lambda = 0.0_wp
-    rel_acc = 0.0_wp
+    rel_acc = huge(1.0_wp)
     num_iter = 0
-    info = QR_ERR_NOT_IMPLEMENTED
+    info = QR_ERR_INVALID_ARGUMENT
+
+    if (.not. self%valid .or. self%n <= 0) return
+    if (.not. allocated(self%q) .or. .not. allocated(self%r)) return
+    if (.not. allocated(self%solve_work)) return
+    matrix_n = self%n
+    if (size(s, 1) /= matrix_n .or. size(s, 2) /= matrix_n) return
+    if (size(v_initial) /= matrix_n .or. size(x) /= matrix_n) return
+    if (max_iter <= 0) return
+    if (complex_norm_squared(matrix_n, v_initial) <= tiny(1.0_wp)) return
+
+    if (complex_upper_factor_is_singular(self%r, matrix_n)) then
+      info = QR_ERR_SINGULAR
+      return
+    end if
+
+    self%solve_work(1:matrix_n) = v_initial
+    norm_of_diff_previous = huge(1.0_wp)
+    not_converged = .true.
+
+    do while (not_converged .and. num_iter < max_iter)
+      call zhemv('L', matrix_n, complex_one, s, matrix_n, &
+                 self%solve_work(1:matrix_n), 1, complex_zero, x, 1)
+      call zgemv('C', matrix_n, matrix_n, complex_one, self%q, &
+                 self%capacity, x, 1, complex_zero, &
+                 self%solve_work(matrix_n + 1:2 * matrix_n), 1)
+      x = self%solve_work(matrix_n + 1:2 * matrix_n)
+      call ztrsv('U', 'N', 'N', matrix_n, self%r, self%capacity, x, 1)
+
+      ! GHEPIIS uses the largest real or imaginary component, rather than the
+      ! largest complex modulus, so retain that detail here.
+      max_component = complex_max_abs_real_or_imag(matrix_n, x)
+      if (max_component <= tiny(1.0_wp)) then
+        info = QR_ERR_SINGULAR
+        return
+      end if
+      x = x / cmplx(max_component, 0.0_wp, kind=wp)
+
+      current_norm_squared = complex_norm_squared( &
+                               matrix_n, self%solve_work(1:matrix_n))
+      if (current_norm_squared <= tiny(1.0_wp)) then
+        info = QR_ERR_SINGULAR
+        return
+      end if
+      coefficient = dot_product(x, self%solve_work(1:matrix_n)) / &
+                    cmplx(current_norm_squared, 0.0_wp, kind=wp)
+      eigenvector_norm_squared = complex_norm_squared(matrix_n, x)
+      norm_of_diff = complex_direction_difference( &
+                       matrix_n, x, coefficient, &
+                       self%solve_work(1:matrix_n), &
+                       eigenvector_norm_squared)
+
+      if (tol > 0.0_wp) then
+        if (norm_of_diff <= tol) not_converged = .false.
+      else
+        if (norm_of_diff > norm_of_diff_previous .and. &
+            norm_of_diff <= abs(tol)) not_converged = .false.
+        norm_of_diff_previous = norm_of_diff
+      end if
+
+      num_iter = num_iter + 1
+      if (not_converged .and. num_iter < max_iter) then
+        self%solve_work(1:matrix_n) = x
+      end if
+    end do
+
+    rel_acc = norm_of_diff
+    if (not_converged) then
+      info = QR_ERR_NO_CONVERGENCE
+    else
+      info = QR_SUCCESS
+    end if
+
+    call zhemv('L', matrix_n, complex_one, s, matrix_n, x, 1, &
+               complex_zero, self%solve_work(1:matrix_n), 1)
+    overlap_norm_squared = real( &
+                               dot_product(x, &
+                                 self%solve_work(1:matrix_n)), wp)
+    if (overlap_norm_squared <= tiny(1.0_wp)) then
+      info = QR_ERR_INVALID_ARGUMENT
+      return
+    end if
+
+    call zgemv('N', matrix_n, matrix_n, complex_one, self%r, &
+               self%capacity, x, 1, complex_zero, &
+               self%solve_work(matrix_n + 1:2 * matrix_n), 1)
+    call zgemv('N', matrix_n, matrix_n, complex_one, self%q, &
+               self%capacity, &
+               self%solve_work(matrix_n + 1:2 * matrix_n), 1, &
+               complex_zero, self%solve_work(1:matrix_n), 1)
+    shifted_numerator = real( &
+                            dot_product(x, &
+                              self%solve_work(1:matrix_n)), wp)
+    lambda = self%shift + shifted_numerator / overlap_norm_squared
+
+    select case (norm_mode)
+    case (0)
+      x = x / cmplx(sqrt(overlap_norm_squared), 0.0_wp, kind=wp)
+    case (1)
+      eigenvector_norm_squared = complex_norm_squared(matrix_n, x)
+      if (eigenvector_norm_squared <= tiny(1.0_wp)) then
+        info = QR_ERR_SINGULAR
+        return
+      end if
+      x = x / cmplx(sqrt(eigenvector_norm_squared), 0.0_wp, kind=wp)
+    end select
   end subroutine complex_solve
+
+  !> Return the squared Euclidean norm of a real vector.
+  !!
+  !! This deliberately mirrors RDotProdItself from the pristine linalg
+  !! implementation. Keeping the reduction here avoids an intermediate array
+  !! and keeps the helper generic in wp.
+  function real_norm_squared(n, x) result(norm_squared)
+    integer, intent(in) :: n
+    real(wp), intent(in) :: x(:)
+    real(wp) :: norm_squared
+    integer :: i
+
+    norm_squared = 0.0_wp
+    do i = 1, n
+      norm_squared = norm_squared + x(i) * x(i)
+    end do
+  end function real_norm_squared
+
+  !> Return the real squared Euclidean norm x^H*x of a complex vector.
+  function complex_norm_squared(n, x) result(norm_squared)
+    integer, intent(in) :: n
+    complex(wp), intent(in) :: x(:)
+    real(wp) :: norm_squared
+    integer :: i
+
+    norm_squared = 0.0_wp
+    do i = 1, n
+      norm_squared = norm_squared + real(x(i), wp)**2 + aimag(x(i))**2
+    end do
+  end function complex_norm_squared
+
+  !> Compute ||x-alpha*y||_2 / ||x||_2 for real inverse iteration.
+  function real_direction_difference(n, x, alpha, y, x_norm_squared) &
+      result(relative_difference)
+    integer, intent(in) :: n
+    real(wp), intent(in) :: x(:), alpha, y(:), x_norm_squared
+    real(wp) :: relative_difference
+    real(wp) :: difference, difference_norm_squared
+    integer :: i
+
+    difference_norm_squared = 0.0_wp
+    do i = 1, n
+      difference = x(i) - alpha * y(i)
+      difference_norm_squared = difference_norm_squared + &
+                                difference * difference
+    end do
+    relative_difference = sqrt(difference_norm_squared / x_norm_squared)
+  end function real_direction_difference
+
+  !> Compute ||x-alpha*y||_2 / ||x||_2 for complex inverse iteration.
+  function complex_direction_difference(n, x, alpha, y, x_norm_squared) &
+      result(relative_difference)
+    integer, intent(in) :: n
+    complex(wp), intent(in) :: x(:), alpha, y(:)
+    real(wp), intent(in) :: x_norm_squared
+    real(wp) :: relative_difference, difference_norm_squared
+    complex(wp) :: difference
+    integer :: i
+
+    difference_norm_squared = 0.0_wp
+    do i = 1, n
+      difference = x(i) - alpha * y(i)
+      difference_norm_squared = difference_norm_squared + abs(difference)**2
+    end do
+    relative_difference = sqrt(difference_norm_squared / x_norm_squared)
+  end function complex_direction_difference
+
+  !> Return the scale used by GHEPIIS: the largest magnitude among every
+  !! real and imaginary component, not the largest complex modulus.
+  function complex_max_abs_real_or_imag(n, x) result(max_component)
+    integer, intent(in) :: n
+    complex(wp), intent(in) :: x(:)
+    real(wp) :: max_component
+    integer :: i
+
+    max_component = 0.0_wp
+    do i = 1, n
+      max_component = max(max_component, abs(real(x(i), wp)), &
+                          abs(aimag(x(i))))
+    end do
+  end function complex_max_abs_real_or_imag
+
+  !> Detect a zero or precision-scale-small diagonal in a real R factor.
+  !! DGEQRF itself reports only invalid arguments, so this check supplies the
+  !! singular-matrix error that the original LDL^T factorization provided.
+  function real_upper_factor_is_singular(r, n) result(is_singular)
+    real(wp), intent(in) :: r(:,:)
+    integer, intent(in) :: n
+    logical :: is_singular
+    real(wp) :: factor_scale, threshold
+    integer :: i
+
+    factor_scale = maxval(abs(r(1:n,1:n)))
+    threshold = max(tiny(1.0_wp), epsilon(1.0_wp) * factor_scale)
+    is_singular = .false.
+    do i = 1, n
+      if (abs(r(i,i)) <= threshold) then
+        is_singular = .true.
+        return
+      end if
+    end do
+  end function real_upper_factor_is_singular
+
+  !> Complex counterpart of real_upper_factor_is_singular.
+  function complex_upper_factor_is_singular(r, n) result(is_singular)
+    complex(wp), intent(in) :: r(:,:)
+    integer, intent(in) :: n
+    logical :: is_singular
+    real(wp) :: factor_scale, threshold
+    integer :: i
+
+    factor_scale = maxval(abs(r(1:n,1:n)))
+    threshold = max(tiny(1.0_wp), epsilon(1.0_wp) * factor_scale)
+    is_singular = .false.
+    do i = 1, n
+      if (abs(r(i,i)) <= threshold) then
+        is_singular = .true.
+        return
+      end if
+    end do
+  end function complex_upper_factor_is_singular
 
 end module qrlinalg

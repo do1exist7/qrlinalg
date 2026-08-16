@@ -2,8 +2,8 @@
 
 `qrlinalg` is the serial QR-state layer intended for ECGPACK generalized
 symmetric and Hermitian eigenproblems. Version 0.1 implements initialization
-and fresh real/complex QR factorization. Structural updates and inverse
-iteration remain explicit stubs that return `QR_ERR_NOT_IMPLEMENTED`.
+and fresh real/complex QR factorization plus generalized inverse iteration.
+Structural updates remain explicit stubs that return `QR_ERR_NOT_IMPLEMENTED`.
 
 The project vendors the generic-precision `qrupdate-ng` sources under
 `src/qrupdate/`, copied from `linalg/src/qrupdate`. That directory records the
@@ -42,6 +42,9 @@ before building. This is a compile-time choice; one library contains one `wp`.
 state metadata, and both real and complex fresh factorizations. They use small
 matrices with analytically orthogonal columns, then check the known magnitudes
 of Q and R as well as reconstruction and orthogonality/unitarity residuals.
+They also solve real symmetric and complex Hermitian generalized eigenproblems
+with known eigensystems in every supported working precision and verify all
+three eigenvector normalization modes.
 
 The test build exposes private state components with `QRLINALG_TESTING` solely
 so these invariants can be inspected without enlarging the public API. Normal
@@ -64,16 +67,16 @@ size and allocates the larger recommended workspace. All storage is therefore
 allocated before factorization, update, or solve loops begin.
 
 ECGPACK remains the owner of `H` and `S`. A QR state neither copies nor retains
-pointers to them, and it never permanently stores `M = H - shift*S`. A future
-fresh factorization will form `M` directly in the `Q` buffer, extract `R`, and
-generate explicit `Q`.
+pointers to them, and it never permanently stores `M = H - shift*S`. A fresh
+factorization forms `M` directly in the `Q` buffer, extracts `R`, and generates
+explicit `Q`.
 
 Approximate factor storage, for real scalar size `b` and capacity `c`, is
 `2*b*c^2` bytes for a real state and `4*b*c^2` bytes for a complex state.
 Caller-owned `H` and `S` bring the application total to roughly four real or
 four complex full matrices.
 
-## Intended numerical path
+## Numerical path
 
 Fresh factors represent
 
@@ -81,9 +84,9 @@ Fresh factors represent
 H - shift*S = Q*R.
 ```
 
-Inverse iteration will compute `w = S*v`, then `y = Q**T*w` for real data or
+Inverse iteration computes `w = S*v`, then `y = Q**T*w` for real data or
 `y = Q**H*w` for complex data, followed by the triangular solve `R*x = y`.
-The final shifted Rayleigh quotient can reuse the factors:
+The final shifted Rayleigh quotient reuses the factors without storing M:
 
 ```text
 M*x = Q*(R*x)
@@ -121,6 +124,21 @@ bundled `xORGQR/xUNGQR` to generate explicit Q. It allocates nothing and does
 not retain H or S. It returns `QR_SUCCESS`, `QR_ERR_INVALID_ARGUMENT`, or
 `QR_ERR_FACTORIZATION`.
 
+`solve(S, v_initial, ...)` implements the mathematical iteration and stopping
+rules of the pristine `GSEPIIS`/`GHEPIIS` routines through the stored QR
+factors. A positive tolerance stops at the requested direction-change estimate;
+a negative tolerance continues until that estimate begins to worsen, while
+still requiring accuracy `abs(tol)`. Normalization mode 0 produces unit S norm,
+mode 1 produces unit Euclidean norm, and any other value retains unit-largest-
+component scaling. The routine allocates nothing and leaves S and the initial
+vector unchanged.
+
+Successful solves return `QR_SUCCESS`. Invalid dimensions, state, iteration
+limit, starting vector, or non-positive S norm return
+`QR_ERR_INVALID_ARGUMENT`; an unusable triangular factor returns
+`QR_ERR_SINGULAR`. `QR_ERR_NO_CONVERGENCE` still returns the best eigenpair
+obtained within `max_iter`.
+
 Both state types expose the same numerical method names:
 
 ```fortran
@@ -132,9 +150,8 @@ call qr%solve(S, v_initial, x, lambda, tol, max_iter, norm_mode, &
               rel_acc, num_iter, info)
 ```
 
-In v0.1 the replacement, append, deletion, and solve methods return
-`QR_ERR_NOT_IMPLEMENTED`. `solve` also sets `x`, `lambda`, `rel_acc`, and
-`num_iter` to zero. Recoverable errors never use `error stop`, and failed
+In v0.1 only the replacement, append, and deletion methods return
+`QR_ERR_NOT_IMPLEMENTED`. Recoverable errors never use `error stop`, and failed
 update stubs do not increment counters.
 
 The mutable states are not thread-safe. Threads or tasks must use independent
