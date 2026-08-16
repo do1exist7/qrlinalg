@@ -1,9 +1,9 @@
 # qrlinalg
 
 `qrlinalg` is the serial QR-state layer intended for ECGPACK generalized
-symmetric and Hermitian eigenproblems. Version 0.1 is an architectural
-skeleton: initialization allocates reusable storage, while every numerical
-operation returns `QR_ERR_NOT_IMPLEMENTED` and leaves finite, safe outputs.
+symmetric and Hermitian eigenproblems. Version 0.1 implements initialization
+and fresh real/complex QR factorization. Structural updates and inverse
+iteration remain explicit stubs that return `QR_ERR_NOT_IMPLEMENTED`.
 
 The project vendors the generic-precision `qrupdate-ng` sources under
 `src/qrupdate/`, copied from `linalg/src/qrupdate`. That directory records the
@@ -35,6 +35,18 @@ fpm build
 For `wp=10` or `wp=16`, change the single `QRLINALG_WP` macro in `fpm.toml`
 before building. This is a compile-time choice; one library contains one `wp`.
 
+## Tests
+
+`make test` (or its alias `make check`) builds separate checked executables for
+`wp=8`, `wp=10`, and `wp=16`. The tests exercise initialization, error paths,
+state metadata, and both real and complex fresh factorizations. They use small
+matrices with analytically orthogonal columns, then check the known magnitudes
+of Q and R as well as reconstruction and orthogonality/unitarity residuals.
+
+The test build exposes private state components with `QRLINALG_TESTING` solely
+so these invariants can be inspected without enlarging the public API. Normal
+Make and fpm builds retain private components and contain no test-only code.
+
 ## State and ownership
 
 The module exposes two independent concrete types, `qr_real_state` and
@@ -47,8 +59,9 @@ Each state privately owns:
 - lifetime structural-update and updates-since-fresh counters.
 
 The complex state also owns real workspace required by complex rotations.
-Initialization allocates for the expected maximum basis size so later update
-and solve loops need not allocate.
+Initialization queries both LAPACK factorization stages at the maximum basis
+size and allocates the larger recommended workspace. All storage is therefore
+allocated before factorization, update, or solve loops begin.
 
 ECGPACK remains the owner of `H` and `S`. A QR state neither copies nor retains
 pointers to them, and it never permanently stores `M = H - shift*S`. A future
@@ -97,9 +110,16 @@ copied into state-owned workspace.
 
 ## API status
 
-`initialize(max_n, info)` is implemented. It validates positive capacity,
-allocates and clears all storage, and returns `QR_SUCCESS`,
-`QR_ERR_INVALID_ARGUMENT`, or `QR_ERR_ALLOCATION`.
+`initialize(max_n, info)` validates positive capacity, allocates and clears all
+storage, and returns `QR_SUCCESS`, `QR_ERR_INVALID_ARGUMENT`, or
+`QR_ERR_ALLOCATION`. It may return `QR_ERR_FACTORIZATION` if either bundled
+LAPACK workspace query rejects the requested configuration.
+
+`factorize_fresh(H, S, shift, info)` forms `H-shift*S` directly in the Q
+buffer, calls the bundled `xGEQRF`, extracts upper-triangular R, and calls the
+bundled `xORGQR/xUNGQR` to generate explicit Q. It allocates nothing and does
+not retain H or S. It returns `QR_SUCCESS`, `QR_ERR_INVALID_ARGUMENT`, or
+`QR_ERR_FACTORIZATION`.
 
 Both state types expose the same numerical method names:
 
@@ -112,9 +132,10 @@ call qr%solve(S, v_initial, x, lambda, tol, max_iter, norm_mode, &
               rel_acc, num_iter, info)
 ```
 
-In v0.1 these methods return `QR_ERR_NOT_IMPLEMENTED`. `solve` also sets `x`,
-`lambda`, `rel_acc`, and `num_iter` to zero. Recoverable errors never use
-`error stop`, and failed update stubs do not increment counters.
+In v0.1 the replacement, append, deletion, and solve methods return
+`QR_ERR_NOT_IMPLEMENTED`. `solve` also sets `x`, `lambda`, `rel_acc`, and
+`num_iter` to zero. Recoverable errors never use `error stop`, and failed
+update stubs do not increment counters.
 
 The mutable states are not thread-safe. Threads or tasks must use independent
 states. They contain no MPI communicator or branch and should not be replicated
