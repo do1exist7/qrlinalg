@@ -1,7 +1,7 @@
 # qrlinalg
 
 `qrlinalg` is the serial QR-state layer intended for ECGPACK generalized
-symmetric and Hermitian eigenproblems. Version 0.1 implements initialization
+symmetric and Hermitian eigenproblems. Version 0.1.0 implements initialization
 and fresh real/complex QR factorization plus generalized inverse iteration.
 Symmetric/Hermitian row-and-column replacement, end-appending, and principal-
 submatrix deletion update the stored factors in place.
@@ -64,7 +64,7 @@ individual executable can be rerun directly, for example:
 ./build/test-wp8/test_replacement
 ```
 
-The six independently reported executables cover:
+The seven independently reported executables cover:
 
 - `test_initialization`: invalid initialization, state metadata, and every
   state-owned workspace extent;
@@ -84,6 +84,10 @@ The six independently reported executables cover:
 - `test_inverse_iteration`: noncommuting generalized eigenproblems with known
   eigensystems, all normalization modes, both stopping rules, nonconvergence
   with a usable approximation, and recoverable error paths.
+- `test_inverse_iteration_failures`: exact degenerate eigenspaces, equidistant
+  shifts, missing target components, slowly converging eigenvalue clusters,
+  precision-scale singular shifts, indefinite overlap matrices, and
+  roundoff-scale starting vectors in both real and complex arithmetic.
 
 The numerical assertions use precision-scaled tolerances. QR factors are
 compared through reconstruction, triangularity, and orthogonality/unitarity,
@@ -91,6 +95,14 @@ not against one arbitrary choice of column signs or complex phases. Analytical
 eigenvectors are compared in a sign- or phase-insensitive manner. Test inputs
 are deterministic, so a failure can be reproduced without recording a random
 seed.
+
+The failure-regime suite intentionally expects different statuses for
+different mathematical limitations. Degeneracy or a start confined to one
+invariant subspace can produce a valid eigenpair and `QR_SUCCESS`. Oscillation
+and insufficient separation return `QR_ERR_NO_CONVERGENCE` with a finite
+approximation. Singular shifted factors and violations of the positive-
+definite-overlap or nonzero-start preconditions return `QR_ERR_SINGULAR` or
+`QR_ERR_INVALID_ARGUMENT`.
 
 Shared assertions and reference norms live in `test/test_support.f90`. The test
 build exposes private state components with `QRLINALG_TESTING` solely so these

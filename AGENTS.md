@@ -53,6 +53,9 @@ leave factors, dimensions, validity, shifts, and counters unchanged.
   `test/test_delete.f90`, and
   `test/test_inverse_iteration.f90` contain white-box state-contract and
   analytical numerical tests grouped by behavior.
+- `test/test_inverse_iteration_failures.f90` contains analytical tests for
+  degenerate, clustered, oscillatory, singular, and precondition-violating
+  inverse-iteration regimes.
 - `test/differential/` contains the optional data-driven comparison harness
   for qrlinalg and the original `GSEPIIS`/`GHEPIIS` implementation.
 - `orig/` contains reference implementations, including the pristine
@@ -417,7 +420,9 @@ The permanent tests must continue to cover:
 - all three eigenvector normalization modes;
 - positive and negative tolerance behavior;
 - iteration-limit nonconvergence with a usable returned approximation;
-- singular factors, zero starting vectors, and invalid state errors.
+- singular factors, zero starting vectors, and invalid state errors;
+- exact degeneracy, equidistant shifts, missing target components, slowly
+  converging clusters, indefinite overlap matrices, and roundoff-scale starts.
 
 Scale numerical tolerances with `epsilon(1.0_wp)`. Compare eigenvectors in a
 sign- or phase-invariant manner. Do not compare a valid QR factorization to one

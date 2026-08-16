@@ -67,7 +67,8 @@ FFLAGS := $(MODULE_FLAGS) $(CONFIG_FLAGS)
 ARFLAGS = rcs
 QRLINALG_TEST_FLAGS ?=
 TEST_NAMES := test_initialization test_factorization test_replacement \
-	test_append test_delete test_inverse_iteration
+	test_append test_delete test_inverse_iteration \
+	test_inverse_iteration_failures
 TEST_EXES := $(addprefix $(BUILD_DIR)/,$(TEST_NAMES))
 TEST_SUPPORT_OBJECT := $(BUILD_DIR)/test_support.o
 
