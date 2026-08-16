@@ -39,21 +39,64 @@ before building. This is a compile-time choice; one library contains one `wp`.
 
 ## Tests
 
-`make test` (or its alias `make check`) builds and runs the initialization,
-fresh-factorization, and inverse-iteration test executables for `wp=8`,
-`wp=10`, and `wp=16`. The suites exercise initialization, error paths, state
-metadata, and both real and complex fresh factorizations. They use small
-matrices with analytically orthogonal columns, then check the known magnitudes
-of Q and R as well as reconstruction and orthogonality/unitarity residuals.
-They also solve real symmetric and complex Hermitian generalized eigenproblems
-with known eigensystems in every supported working precision and verify all
-three eigenvector normalization modes. Shared assertions and reference norms
-live in `test/test_support.f90`; each numerical area remains an independently
-reported executable.
+Run the complete permanent test suite with:
 
-The test build exposes private state components with `QRLINALG_TESTING` solely
-so these invariants can be inspected without enlarging the public API. Normal
-Make and fpm builds retain private components and contain no test-only code.
+```sh
+make check
+```
+
+`make test` is an equivalent target. Both commands create checked debug builds
+and run every test at all three supported working kinds: `wp=8`, `wp=10`, and
+`wp=16`. A nonzero exit status means at least one assertion failed.
+
+During development, run the complete suite at one working kind with:
+
+```sh
+make check-one PREC=8
+make check-one PREC=10
+make check-one PREC=16
+```
+
+Pass `COMPILER=ifx`, `COMPILER=ifort`, or `COMPILER=nvfortran` to either form
+to exercise another supported compiler. After `make check-one PREC=8`, an
+individual executable can be rerun directly, for example:
+
+```sh
+./build/test-wp8/test_replacement
+```
+
+The four independently reported executables cover:
+
+- `test_initialization`: invalid initialization, state metadata, and every
+  state-owned workspace extent;
+- `test_factorization`: real and complex analytical QR reconstruction,
+  orthogonality/unitarity, triangularity, caller ownership, and rejected-call
+  state preservation;
+- `test_replacement`: 100 successive real symmetric updates and 100 successive
+  complex Hermitian updates, checking analytical reconstruction and factor
+  quality after every update, caller ownership, counters, and rejected updates;
+- `test_inverse_iteration`: noncommuting generalized eigenproblems with known
+  eigensystems, all normalization modes, both stopping rules, nonconvergence
+  with a usable approximation, and recoverable error paths.
+
+The numerical assertions use precision-scaled tolerances. QR factors are
+compared through reconstruction, triangularity, and orthogonality/unitarity,
+not against one arbitrary choice of column signs or complex phases. Analytical
+eigenvectors are compared in a sign- or phase-insensitive manner. Test inputs
+are deterministic, so a failure can be reproduced without recording a random
+seed.
+
+Shared assertions and reference norms live in `test/test_support.f90`. The test
+build exposes private state components with `QRLINALG_TESTING` solely so these
+invariants can be inspected without enlarging the public API. Normal Make and
+fpm builds retain private components and contain no test-only code.
+
+For an optimized regression run at one precision, use:
+
+```sh
+make CONFIG=release PREC=8 BUILD_DIR=build/test-release-wp8 \
+  QRLINALG_TEST_FLAGS=-DQRLINALG_TESTING test-one
+```
 
 ### Differential tests against the original solver
 

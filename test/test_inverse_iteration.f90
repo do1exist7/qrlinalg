@@ -32,7 +32,8 @@ contains
     integer, parameter :: n = 2
     type(qr_real_state) :: state
     real(wp), parameter :: shift = 2.25_wp, exact_lambda = 2.0_wp
-    real(wp) :: h(n,n), s(n,n), s_before(n,n), v(n), v_before(n), x(n)
+    real(wp) :: h(n,n), s(n,n), s_reference(n,n), s_before(n,n)
+    real(wp) :: v(n), v_before(n), x(n)
     real(wp) :: lambda, rel_acc, tolerance, eigen_tolerance
     real(wp) :: converged_lambda, converged_rel_acc
     real(wp) :: residual, s_norm, euclidean_norm
@@ -41,9 +42,9 @@ contains
     tolerance = 1000.0_wp * epsilon(1.0_wp)
     eigen_tolerance = 10000.0_wp * epsilon(1.0_wp)
     s = reshape([1.0_wp, -1.0_wp, -1.0_wp, 2.0_wp], [n,n])
+    s_reference = s
     h = reshape([2.0_wp, -2.0_wp, -2.0_wp, 8.0_wp], [n,n])
     v = [1.0_wp, 0.5_wp]
-    s_before = s
     v_before = v
 
     call state%initialize(n, info)
@@ -53,12 +54,19 @@ contains
     call check(info == QR_SUCCESS, &
                'real inverse-iteration matrix factorizes', failures)
 
+    ! DSYMV is required to read only the lower triangle. Poisoning the unused
+    ! upper entry makes an accidental full-matrix product fail analytically.
+    s(1,2) = 123.0_wp
+    s_before = s
+
     call state%solve(s, v, x, lambda, tolerance, 100, 0, &
                      rel_acc, num_iter, info)
-    residual = sqrt(sum((matmul(h, x) - lambda * matmul(s, x))**2)) / &
-               ((real_frobenius(h) + abs(lambda) * real_frobenius(s)) * &
+    residual = sqrt(sum((matmul(h, x) - &
+                         lambda * matmul(s_reference, x))**2)) / &
+               ((real_frobenius(h) + &
+                 abs(lambda) * real_frobenius(s_reference)) * &
                 sqrt(sum(x * x)))
-    s_norm = dot_product(x, matmul(s, x))
+    s_norm = dot_product(x, matmul(s_reference, x))
     converged_lambda = lambda
     converged_rel_acc = rel_acc
     converged_num_iter = num_iter
@@ -80,7 +88,7 @@ contains
                'real analytical generalized residual is small', failures)
     call check(all(abs(s - s_before) <= 0.0_wp) .and. &
                all(abs(v - v_before) <= 0.0_wp), &
-               'real solve preserves S and the initial vector', failures)
+               'real solve preserves S and ignores its upper triangle', failures)
 
     ! Exercise the remaining normalization modes using the same factors.
     call state%solve(s, v, x, lambda, tolerance, 100, 1, &
@@ -133,7 +141,7 @@ contains
     integer, parameter :: n = 2
     type(qr_complex_state) :: state
     real(wp), parameter :: shift = 1.25_wp, exact_lambda = 1.0_wp
-    complex(wp) :: h(n,n), s(n,n), s_before(n,n)
+    complex(wp) :: h(n,n), s(n,n), s_reference(n,n), s_before(n,n)
     complex(wp) :: v(n), v_before(n), x(n), residual_vector(n)
     complex(wp) :: projection_coefficient
     real(wp) :: lambda, rel_acc, tolerance, eigen_tolerance
@@ -148,13 +156,13 @@ contains
     s(1,2) = cmplx(0.0_wp, -1.0_wp, kind=wp)
     s(2,1) = conjg(s(1,2))
     s(2,2) = cmplx(2.0_wp, 0.0_wp, kind=wp)
+    s_reference = s
     h(1,1) = cmplx(1.0_wp, 0.0_wp, kind=wp)
     h(1,2) = cmplx(0.0_wp, -1.0_wp, kind=wp)
     h(2,1) = conjg(h(1,2))
     h(2,2) = cmplx(6.0_wp, 0.0_wp, kind=wp)
     v = [cmplx(1.0_wp, 0.0_wp, kind=wp), &
          cmplx(1.0_wp, 0.0_wp, kind=wp)]
-    s_before = s
     v_before = v
 
     call state%initialize(n, info)
@@ -164,14 +172,21 @@ contains
     call check(info == QR_SUCCESS, &
                'complex inverse-iteration matrix factorizes', failures)
 
+    ! ZHEMV must likewise ignore the upper triangle, including an unrelated
+    ! imaginary value that would destroy Hermitian symmetry if it were read.
+    s(1,2) = cmplx(91.0_wp, -37.0_wp, kind=wp)
+    s_before = s
+
     call state%solve(s, v, x, lambda, tolerance, 100, 0, &
                      rel_acc, num_iter, info)
     residual_vector = matmul(h, x) - &
-                      cmplx(lambda, 0.0_wp, kind=wp) * matmul(s, x)
+                      cmplx(lambda, 0.0_wp, kind=wp) * &
+                      matmul(s_reference, x)
     residual = sqrt(sum(abs(residual_vector)**2)) / &
-               ((complex_frobenius(h) + abs(lambda) * complex_frobenius(s)) * &
+               ((complex_frobenius(h) + &
+                 abs(lambda) * complex_frobenius(s_reference)) * &
                 sqrt(sum(abs(x)**2)))
-    s_norm = real(dot_product(x, matmul(s, x)), wp)
+    s_norm = real(dot_product(x, matmul(s_reference, x)), wp)
     converged_lambda = lambda
     converged_rel_acc = rel_acc
     converged_num_iter = num_iter
@@ -193,7 +208,8 @@ contains
                'complex analytical generalized residual is small', failures)
     call check(all(abs(s - s_before) <= 0.0_wp) .and. &
                all(abs(v - v_before) <= 0.0_wp), &
-               'complex solve preserves S and the initial vector', failures)
+               'complex solve preserves S and ignores its upper triangle', &
+               failures)
 
     call state%solve(s, v, x, lambda, tolerance, 100, 1, &
                      rel_acc, num_iter, info)
@@ -230,6 +246,12 @@ contains
                'complex direction error uses the phase-invariant projection', &
                failures)
 
+    call state%solve(s, v, x, lambda, -1.0_wp, 2, 1, &
+                     rel_acc, num_iter, info)
+    call check(info == QR_ERR_NO_CONVERGENCE .and. num_iter == 2, &
+               'complex negative tolerance requires a confirming iteration', &
+               failures)
+
     write(*,'(a,i0,3(a,es12.4),a,i0)') '  complex solve wp=', wp, &
       ' lambda=', converged_lambda, ' residual=', residual, &
       ' rel_acc=', converged_rel_acc, ' iterations=', converged_num_iter
@@ -240,7 +262,10 @@ contains
     integer, intent(inout) :: failures
     integer, parameter :: n = 2
     type(qr_real_state) :: empty_state, singular_state, valid_state
+    type(qr_complex_state) :: complex_empty, complex_singular, complex_valid
     real(wp) :: h(n,n), s(n,n), v(n), zero_v(n), x(n)
+    complex(wp) :: complex_h(n,n), complex_s(n,n), complex_v(n)
+    complex(wp) :: complex_zero_v(n), complex_x(n)
     real(wp) :: lambda, rel_acc
     integer :: info, num_iter
 
@@ -277,6 +302,36 @@ contains
                            rel_acc, num_iter, info)
     call check(info == QR_ERR_INVALID_ARGUMENT .and. num_iter == 0, &
                'solve rejects a nonpositive iteration limit', failures)
+
+    complex_s = cmplx(s, 0.0_wp, kind=wp)
+    complex_h = cmplx(h, 0.0_wp, kind=wp)
+    complex_v = cmplx(v, 0.5_wp * v, kind=wp)
+    complex_zero_v = cmplx(0.0_wp, 0.0_wp, kind=wp)
+    call complex_empty%solve(complex_s, complex_v, complex_x, lambda, &
+                             100.0_wp * epsilon(1.0_wp), 20, 1, &
+                             rel_acc, num_iter, info)
+    call check(info == QR_ERR_INVALID_ARGUMENT .and. num_iter == 0 .and. &
+               all(abs(complex_x) <= 0.0_wp) .and. &
+               abs(lambda) <= 0.0_wp, &
+               'complex solve rejects an unfactorized state safely', failures)
+
+    call complex_singular%initialize(n, info)
+    call complex_singular%factorize_fresh(complex_h, complex_s, 2.0_wp, info)
+    call check(info == QR_SUCCESS, &
+               'complex singular matrix still has QR storage', failures)
+    call complex_singular%solve(complex_s, complex_v, complex_x, lambda, &
+                                100.0_wp * epsilon(1.0_wp), 20, 1, &
+                                rel_acc, num_iter, info)
+    call check(info == QR_ERR_SINGULAR .and. num_iter == 0, &
+               'complex solve detects a singular R factor', failures)
+
+    call complex_valid%initialize(n, info)
+    call complex_valid%factorize_fresh(complex_h, complex_s, 2.25_wp, info)
+    call complex_valid%solve(complex_s, complex_zero_v, complex_x, lambda, &
+                             100.0_wp * epsilon(1.0_wp), 20, 1, &
+                             rel_acc, num_iter, info)
+    call check(info == QR_ERR_INVALID_ARGUMENT .and. num_iter == 0, &
+               'complex solve rejects a zero starting vector', failures)
   end subroutine test_solve_error_paths
 
 end program test_inverse_iteration

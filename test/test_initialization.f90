@@ -23,7 +23,9 @@ contains
   subroutine test_invalid_initialization(failures)
     integer, intent(inout) :: failures
     type(qr_real_state) :: state
+    type(qr_complex_state) :: complex_state
     real(wp) :: h(1,1), s(1,1)
+    complex(wp) :: complex_h(1,1), complex_s(1,1)
     integer :: info
 
     h = 1.0_wp
@@ -41,6 +43,20 @@ contains
                'failed initialization leaves factors invalid', failures)
     call check(.not. allocated(state%q) .and. .not. allocated(state%r), &
                'failed initialization owns no matrix storage', failures)
+
+    complex_h = cmplx(1.0_wp, 0.0_wp, kind=wp)
+    complex_s = cmplx(1.0_wp, 0.0_wp, kind=wp)
+    call complex_state%factorize_fresh(complex_h, complex_s, 0.0_wp, info)
+    call check(info == QR_ERR_INVALID_ARGUMENT, &
+               'complex factorization rejects an uninitialized state', failures)
+    call complex_state%initialize(-1, info)
+    call check(info == QR_ERR_INVALID_ARGUMENT .and. &
+               complex_state%capacity == 0 .and. complex_state%n == 0 .and. &
+               .not. complex_state%valid, &
+               'complex initialize rejects negative capacity safely', failures)
+    call check(.not. allocated(complex_state%q) .and. &
+               .not. allocated(complex_state%r), &
+               'failed complex initialization owns no matrix storage', failures)
   end subroutine test_invalid_initialization
 
   ! Verify all storage and metadata established for an initialized real state.

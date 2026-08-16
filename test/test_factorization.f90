@@ -125,6 +125,8 @@ contains
     real(wp) :: expected_abs_q(n,n)
     complex(wp) :: h(n,n), h_before(n,n), s(n,n), s_before(n,n)
     complex(wp) :: m(n,n), identity(n,n), z
+    complex(wp) :: q_before(capacity,capacity), r_before(capacity,capacity)
+    complex(wp) :: bad_h(2,3), bad_s(2,2)
     integer :: info
 
     tolerance = 1000.0_wp * epsilon(1.0_wp)
@@ -188,6 +190,18 @@ contains
     call check(r_error <= tolerance, &
                'complex R matches analytical column norms and orthogonality', &
                failures)
+
+    q_before = state%q
+    r_before = state%r
+    bad_h = cmplx(0.0_wp, 0.0_wp, kind=wp)
+    bad_s = cmplx(0.0_wp, 0.0_wp, kind=wp)
+    call state%factorize_fresh(bad_h, bad_s, shift, info)
+    call check(info == QR_ERR_INVALID_ARGUMENT, &
+               'complex factorization rejects nonsquare H', failures)
+    call check(state%valid .and. state%n == n .and. &
+               all(abs(state%q - q_before) <= 0.0_wp) .and. &
+               all(abs(state%r - r_before) <= 0.0_wp), &
+               'invalid complex request preserves existing factors', failures)
 
     write(*,'(a,i0,2(a,es12.4))') '  complex wp=', wp, &
       ' residual=', residual, ' unitarity=', unitarity

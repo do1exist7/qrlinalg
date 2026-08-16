@@ -102,7 +102,7 @@ OBJECTS := \
 	$(BUILD_DIR)/qrupdate.o \
 	$(BUILD_DIR)/qrlinalg.o
 
-.PHONY: all release debug build check test test-one differential-build \
+.PHONY: all release debug build check check-one test test-one differential-build \
 	differential-test compare-orig clean
 
 all: release
@@ -117,10 +117,14 @@ build: $(LIB)
 
 check: test
 
+check-one:
+	$(MAKE) CONFIG=debug PREC=$(PREC) BUILD_DIR=build/test-wp$(PREC) \
+		QRLINALG_TEST_FLAGS=-DQRLINALG_TESTING test-one
+
 test:
-	$(MAKE) CONFIG=debug PREC=8 BUILD_DIR=build/test-wp8 QRLINALG_TEST_FLAGS=-DQRLINALG_TESTING test-one
-	$(MAKE) CONFIG=debug PREC=10 BUILD_DIR=build/test-wp10 QRLINALG_TEST_FLAGS=-DQRLINALG_TESTING test-one
-	$(MAKE) CONFIG=debug PREC=16 BUILD_DIR=build/test-wp16 QRLINALG_TEST_FLAGS=-DQRLINALG_TESTING test-one
+	$(MAKE) check-one PREC=8
+	$(MAKE) check-one PREC=10
+	$(MAKE) check-one PREC=16
 
 test-one: $(TEST_EXES)
 	@set -e; for test_exe in $(TEST_EXES); do $$test_exe; done
