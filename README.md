@@ -37,14 +37,17 @@ before building. This is a compile-time choice; one library contains one `wp`.
 
 ## Tests
 
-`make test` (or its alias `make check`) builds separate checked executables for
-`wp=8`, `wp=10`, and `wp=16`. The tests exercise initialization, error paths,
-state metadata, and both real and complex fresh factorizations. They use small
+`make test` (or its alias `make check`) builds and runs the initialization,
+fresh-factorization, and inverse-iteration test executables for `wp=8`,
+`wp=10`, and `wp=16`. The suites exercise initialization, error paths, state
+metadata, and both real and complex fresh factorizations. They use small
 matrices with analytically orthogonal columns, then check the known magnitudes
 of Q and R as well as reconstruction and orthogonality/unitarity residuals.
 They also solve real symmetric and complex Hermitian generalized eigenproblems
 with known eigensystems in every supported working precision and verify all
-three eigenvector normalization modes.
+three eigenvector normalization modes. Shared assertions and reference norms
+live in `test/test_support.f90`; each numerical area remains an independently
+reported executable.
 
 The test build exposes private state components with `QRLINALG_TESTING` solely
 so these invariants can be inspected without enlarging the public API. Normal

@@ -62,7 +62,9 @@ endif
 FFLAGS := $(MODULE_FLAGS) $(CONFIG_FLAGS)
 ARFLAGS = rcs
 QRLINALG_TEST_FLAGS ?=
-TEST_EXE := $(BUILD_DIR)/test_qrlinalg
+TEST_NAMES := test_initialization test_factorization test_inverse_iteration
+TEST_EXES := $(addprefix $(BUILD_DIR)/,$(TEST_NAMES))
+TEST_SUPPORT_OBJECT := $(BUILD_DIR)/test_support.o
 
 OBJECTS := \
 	$(BUILD_DIR)/wp_def.o \
@@ -94,8 +96,8 @@ test:
 	$(MAKE) CONFIG=debug PREC=10 BUILD_DIR=build/test-wp10 QRLINALG_TEST_FLAGS=-DQRLINALG_TESTING test-one
 	$(MAKE) CONFIG=debug PREC=16 BUILD_DIR=build/test-wp16 QRLINALG_TEST_FLAGS=-DQRLINALG_TESTING test-one
 
-test-one: $(TEST_EXE)
-	$(TEST_EXE)
+test-one: $(TEST_EXES)
+	@set -e; for test_exe in $(TEST_EXES); do $$test_exe; done
 
 $(BUILD_DIR):
 	mkdir -p $@
@@ -131,8 +133,11 @@ $(BUILD_DIR)/qrlinalg.o: $(SRC_DIR)/qrlinalg.f90 $(BUILD_DIR)/wp_def.o | $(BUILD
 	$(FC) $(FFLAGS) $(PREPROCESS_FLAGS) $(QRLINALG_TEST_FLAGS) \
 		$(OWN_WARNING_FLAGS) -c $< -o $@
 
-$(TEST_EXE): test/test_qrlinalg.f90 $(LIB)
-	$(FC) $(FFLAGS) $(OWN_WARNING_FLAGS) $< $(LIB) -o $@
+$(TEST_SUPPORT_OBJECT): test/test_support.f90 $(LIB)
+	$(FC) $(FFLAGS) $(OWN_WARNING_FLAGS) -c $< -o $@
+
+$(BUILD_DIR)/test_%: test/test_%.f90 $(TEST_SUPPORT_OBJECT) $(LIB)
+	$(FC) $(FFLAGS) $(OWN_WARNING_FLAGS) $< $(TEST_SUPPORT_OBJECT) $(LIB) -o $@
 
 clean:
 	rm -rf build
