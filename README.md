@@ -177,8 +177,9 @@ allocated before factorization, update, or solve loops begin.
 
 ECGPACK remains the owner of `H` and `S`. A QR state neither copies nor retains
 pointers to them, and it never permanently stores `M = H - shift*S`. A fresh
-factorization forms `M` directly in the `Q` buffer, extracts `R`, and generates
-explicit `Q`.
+factorization reads only the lower triangles of `H` and `S`, reconstructs the
+full symmetric or Hermitian `M` directly in the `Q` buffer, extracts `R`, and
+generates explicit `Q`. The upper triangles of caller matrices are ignored.
 
 Approximate factor storage, for real scalar size `b` and capacity `c`, is
 `2*b*c^2` bytes for a real state and `4*b*c^2` bytes for a complex state.
@@ -231,10 +232,11 @@ leaves the active order at zero until `factorize_fresh`, and returns
 LAPACK workspace query rejects the requested configuration.
 
 `factorize_fresh(H, S, shift, info)` forms `H-shift*S` directly in the Q
-buffer, calls the bundled `xGEQRF`, extracts upper-triangular R, and calls the
-bundled `xORGQR/xUNGQR` to generate explicit Q. It allocates nothing and does
-not retain H or S. It returns `QR_SUCCESS`, `QR_ERR_INVALID_ARGUMENT`, or
-`QR_ERR_FACTORIZATION`.
+buffer from the lower triangles of H and S, calls the bundled `xGEQRF`,
+extracts upper-triangular R, and calls the bundled `xORGQR/xUNGQR` to generate
+explicit Q. Complex diagonal inputs must be real within a precision-scaled
+tolerance. It allocates nothing and does not retain H or S. It returns
+`QR_SUCCESS`, `QR_ERR_INVALID_ARGUMENT`, or `QR_ERR_FACTORIZATION`.
 
 `solve(S, v_initial, ...)` implements the mathematical iteration and stopping
 rules of the pristine `GSEPIIS`/`GHEPIIS` routines through the stored QR

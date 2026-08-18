@@ -41,6 +41,11 @@ contains
     m = reshape([3.0_wp, 4.0_wp, 4.0_wp, -3.0_wp], [n,n])
     s = reshape([2.0_wp, 0.25_wp, 0.25_wp, 1.5_wp], [n,n])
     h = m + shift * s
+
+    !The lower triangle defines each symmetric input. Deliberately inconsistent
+    !upper entries verify that fresh factorization never references them.
+    h(1,2) = 1234.0_wp
+    s(1,2) = -5678.0_wp
     h_before = h
     s_before = s
 
@@ -125,6 +130,7 @@ contains
     real(wp) :: expected_abs_q(n,n)
     complex(wp) :: h(n,n), h_before(n,n), s(n,n), s_before(n,n)
     complex(wp) :: m(n,n), identity(n,n), z
+    complex(wp) :: invalid_diagonal_h(n,n), invalid_diagonal_s(n,n)
     complex(wp) :: q_before(capacity,capacity), r_before(capacity,capacity)
     complex(wp) :: bad_h(2,3), bad_s(2,2)
     integer :: info
@@ -140,6 +146,11 @@ contains
     s(2,1) = conjg(s(1,2))
     s(2,2) = cmplx(1.5_wp, 0.0_wp, kind=wp)
     h = m + cmplx(shift, 0.0_wp, kind=wp) * s
+
+    !Only the lower Hermitian triangle is part of the input contract. Poison
+    !the upper entries with values unrelated to their lower conjugates.
+    h(1,2) = cmplx(1234.0_wp, -4321.0_wp, kind=wp)
+    s(1,2) = cmplx(-5678.0_wp, 8765.0_wp, kind=wp)
     h_before = h
     s_before = s
 
@@ -202,6 +213,28 @@ contains
                all(abs(state%q - q_before) <= 0.0_wp) .and. &
                all(abs(state%r - r_before) <= 0.0_wp), &
                'invalid complex request preserves existing factors', failures)
+
+    !A Hermitian diagonal is real. Reject a physical matrix that violates this
+    !condition before overwriting the previously valid factorization.
+    invalid_diagonal_h = h
+    invalid_diagonal_h(1,1) = cmplx(real(h(1,1), wp), 1.0_wp, kind=wp)
+    call state%factorize_fresh(invalid_diagonal_h, s, shift, info)
+    call check(info == QR_ERR_INVALID_ARGUMENT, &
+               'complex factorization rejects a non-real H diagonal', failures)
+    call check(state%valid .and. state%n == n .and. &
+               all(abs(state%q - q_before) <= 0.0_wp) .and. &
+               all(abs(state%r - r_before) <= 0.0_wp), &
+               'non-real complex diagonal preserves existing factors', failures)
+
+    invalid_diagonal_s = s
+    invalid_diagonal_s(2,2) = cmplx(real(s(2,2), wp), -1.0_wp, kind=wp)
+    call state%factorize_fresh(h, invalid_diagonal_s, shift, info)
+    call check(info == QR_ERR_INVALID_ARGUMENT, &
+               'complex factorization rejects a non-real S diagonal', failures)
+    call check(state%valid .and. state%n == n .and. &
+               all(abs(state%q - q_before) <= 0.0_wp) .and. &
+               all(abs(state%r - r_before) <= 0.0_wp), &
+               'non-real overlap diagonal preserves existing factors', failures)
 
     write(*,'(a,i0,2(a,es12.4))') '  complex wp=', wp, &
       ' residual=', residual, ' unitarity=', unitarity

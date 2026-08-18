@@ -145,8 +145,16 @@ M = H - shift*S = Q*R.
 ```
 
 Form `M` directly in the state-owned `Q` buffer. Do not create an additional
-full shifted-matrix temporary. Traverse Fortran matrices with the first index
-in the inner loop so columns are contiguous.
+full shifted-matrix temporary. Only the lower triangles of caller-owned `H`
+and `S`, including their diagonals, are defined and may be referenced. Generate
+the opposite triangle of `M` by symmetry or conjugate symmetry. Traverse each
+stored lower-triangular column with the first index in the inner loop so input
+elements are contiguous.
+
+For complex inputs, validate the imaginary parts of the H and S diagonals
+separately against precision-scaled lower-triangle norms before factor storage
+is overwritten. Discard accepted roundoff-sized imaginary diagonal parts so
+the LAPACK input is exactly Hermitian.
 
 The required factorization stages are:
 
@@ -412,6 +420,8 @@ The permanent tests must continue to cover:
 - valid and invalid initialization;
 - workspace extents and initial metadata;
 - real and complex fresh QR factorization;
+- lower-triangle-only H and S input, including poisoned unused upper entries;
+- rejection of non-real complex H and S diagonals before state mutation;
 - `Q*R` reconstruction;
 - orthogonality/unitarity and triangularity;
 - preservation of caller matrices and vectors;
