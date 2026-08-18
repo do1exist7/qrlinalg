@@ -28,7 +28,7 @@ communicators, collectives, compiler wrappers, conditional MPI branches, or
 The following operations are implemented for both `qr_real_state` and
 `qr_complex_state`:
 
-- `initialize(max_n, info)`;
+- `initialize(capacity, info)`;
 - `factorize_fresh(H, S, shift, info)`;
 - `replace_symmetric(idx, delta_h, delta_s, info)`;
 - `append_symmetric(h_column, s_column, info)`;
@@ -157,7 +157,7 @@ xORGQR/xUNGQR(Q) -> explicit orthogonal/unitary Q
 ```
 
 Use the workspace allocated by `initialize`. Initialization must query both
-factorization stages with `LWORK=-1` at `max_n` and allocate the larger
+factorization stages with `LWORK=-1` at `capacity` and allocate the larger
 recommendation, never a hard-coded assumed block size.
 
 All shape, initialization, and capacity checks must happen before existing
@@ -325,6 +325,10 @@ as a conversation with the current user or as a diary of the implementation.
 
 Each nontrivial subroutine or function should have a standalone header that
 contains, as applicable:
+
+The `subroutine` or `function` statement must appear before its explanatory
+header. Place the header immediately after the complete routine statement and
+before the dummy-argument and local declarations.
 
 1. The routine's purpose and the mathematical problem it solves.
 2. The defining equations and important algorithmic assumptions.

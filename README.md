@@ -224,8 +224,9 @@ vector arguments, caller inputs are copied into state-owned workspace.
 
 ## API status
 
-`initialize(max_n, info)` validates positive capacity, allocates and clears all
-storage, and returns `QR_SUCCESS`, `QR_ERR_INVALID_ARGUMENT`, or
+`initialize(capacity, info)` reserves storage for matrices up to `capacity`,
+leaves the active order at zero until `factorize_fresh`, and returns
+`QR_SUCCESS`, `QR_ERR_INVALID_ARGUMENT`, or
 `QR_ERR_ALLOCATION`. It may return `QR_ERR_FACTORIZATION` if either bundled
 LAPACK workspace query rejects the requested configuration.
 

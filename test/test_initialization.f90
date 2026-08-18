@@ -68,7 +68,7 @@ contains
     type(qr_real_state) :: state
     integer :: info
 
-    call state%initialize(capacity, info)
+    call state%initialize(capacity=capacity, info=info)
     call check(info == QR_SUCCESS, 'real initialize succeeds', failures)
     call check(state%capacity == capacity .and. state%n == 0, &
                'real initialize records capacity and zero active order', failures)
@@ -97,7 +97,7 @@ contains
     type(qr_complex_state) :: state
     integer :: info
 
-    call state%initialize(capacity, info)
+    call state%initialize(capacity=capacity, info=info)
     call check(info == QR_SUCCESS, 'complex initialize succeeds', failures)
     call check(state%capacity == capacity .and. state%n == 0 .and. &
                .not. state%valid, &

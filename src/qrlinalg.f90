@@ -228,6 +228,7 @@ module qrlinalg
 
 contains
 
+  subroutine clear_real_state(self)
   !Subroutine clear_real_state releases every allocation owned by a real QR
   !state and restores the state to its default, uninitialized condition. It is
   !used before reinitialization and after a partial allocation failure. Calling
@@ -237,7 +238,6 @@ contains
   !    self - The real QR state. On exit all allocatable components are
   !           unallocated; n and capacity are zero; valid is false; shift and
   !           both structural-update counters are zero.
-  subroutine clear_real_state(self)
     class(qr_real_state), intent(inout) :: self
 
     if (allocated(self%q)) deallocate(self%q)
@@ -254,6 +254,7 @@ contains
     self%updates_since_fresh = 0_int64
   end subroutine clear_real_state
 
+  subroutine clear_complex_state(self)
   !Subroutine clear_complex_state releases every allocation owned by a complex
   !QR state and restores the state to its default, uninitialized condition. In
   !addition to the complex arrays it releases the real workspace required by
@@ -263,7 +264,6 @@ contains
   !    self - The complex QR state. On exit all allocatable components are
   !           unallocated and all metadata and counters have their default
   !           values.
-  subroutine clear_complex_state(self)
     class(qr_complex_state), intent(inout) :: self
 
     if (allocated(self%q)) deallocate(self%q)
@@ -281,41 +281,42 @@ contains
     self%updates_since_fresh = 0_int64
   end subroutine clear_complex_state
 
+  subroutine real_initialize(self, capacity, info)
   !Subroutine real_initialize prepares a real QR state for symmetric matrices
-  !of order not greater than max_n. Any factorization and counters previously
+  !of order not greater than capacity. Any factorization and counters previously
   !held by the state are discarded.
   !
   !The following storage is allocated:
-  !  - full max_n by max_n arrays for the explicit factors Q and R;
-  !  - max_n Householder coefficients in tau;
-  !  - 4*max_n elements for structural QR updates;
-  !  - 2*max_n elements for inverse iteration and Rayleigh quotients;
+  !  - full capacity by capacity arrays for the explicit factors Q and R;
+  !  - capacity Householder coefficients in tau;
+  !  - 4*capacity elements for structural QR updates;
+  !  - 2*capacity elements for inverse iteration and Rayleigh quotients;
   !  - one factorization workspace large enough for both DGEQRF and DORGQR.
   !
   !The size of factor_work is obtained by querying DGEQRF and DORGQR with
-  !LWORK=-1 for a square matrix of order max_n. The larger recommended size is
+  !LWORK=-1 for a square matrix of order capacity. The larger recommended size is
   !allocated once and reused. Initialization does not form a QR factorization;
   !therefore n is zero and valid is false on successful exit.
   !
   !  Input parameter:
-  !    max_n - Maximum matrix order supported by the state. It must be
-  !            positive.
+  !    capacity - Maximum matrix order supported by the state. It must be
+  !               positive. Initialization reserves storage but does not set
+  !               the active matrix order.
   !
   !  Input/output parameter:
   !    self  - The state to initialize. Existing allocations and factorization
-  !            metadata are destroyed before max_n is validated.
+  !            metadata are destroyed before capacity is validated.
   !
   !  Output parameter:
   !    info  - QR_SUCCESS when all storage is ready;
-  !            QR_ERR_INVALID_ARGUMENT when max_n is not positive;
+  !            QR_ERR_INVALID_ARGUMENT when capacity is not positive;
   !            QR_ERR_ALLOCATION when an allocation fails;
   !            QR_ERR_FACTORIZATION when a LAPACK workspace query fails.
   !
   !If initialization fails, self is returned in the empty state described for
   !clear_real_state; no partial allocation remains owned by the object.
-  subroutine real_initialize(self, max_n, info)
     class(qr_real_state), intent(inout) :: self
-    integer, intent(in) :: max_n
+    integer, intent(in) :: capacity
     integer, intent(out) :: info
     integer :: allocation_status, factor_lwork, generate_q_lwork
     integer :: lapack_info, optimal_lwork
@@ -323,16 +324,16 @@ contains
 
     !Discard all previous storage before constructing the new state.
     call clear_real_state(self)
-    if (max_n <= 0) then
+    if (capacity <= 0) then
       info = QR_ERR_INVALID_ARGUMENT
       return
     end if
 
-    !Allocate every array whose extent follows directly from max_n.
+    !Allocate every array whose extent follows directly from capacity.
     !factor_work is allocated after the two workspace queries below.
-    allocate(self%q(max_n, max_n), self%r(max_n, max_n), &
-             self%tau(max_n), self%update_work(4 * max_n), &
-             self%solve_work(2 * max_n), &
+    allocate(self%q(capacity, capacity), self%r(capacity, capacity), &
+             self%tau(capacity), self%update_work(4 * capacity), &
+             self%solve_work(2 * capacity), &
              stat=allocation_status)
     if (allocation_status /= 0) then
       call clear_real_state(self)
@@ -349,23 +350,23 @@ contains
     !Query the workspace recommended for the compact Householder
     !factorization. LWORK=-1 performs no factorization and returns the
     !recommendation in WORK(1).
-    call dgeqrf(max_n, max_n, self%q, max_n, self%tau, work_query, -1, &
+    call dgeqrf(capacity, capacity, self%q, capacity, self%tau, work_query, -1, &
                 lapack_info)
     if (lapack_info /= 0) then
       call clear_real_state(self)
       info = QR_ERR_FACTORIZATION
       return
     end if
-    factor_lwork = max(max_n, ceiling(work_query(1)))
+    factor_lwork = max(capacity, ceiling(work_query(1)))
 
-    call dorgqr(max_n, max_n, max_n, self%q, max_n, self%tau, &
+    call dorgqr(capacity, capacity, capacity, self%q, capacity, self%tau, &
                 work_query, -1, lapack_info)
     if (lapack_info /= 0) then
       call clear_real_state(self)
       info = QR_ERR_FACTORIZATION
       return
     end if
-    generate_q_lwork = max(max_n, ceiling(work_query(1)))
+    generate_q_lwork = max(capacity, ceiling(work_query(1)))
 
     optimal_lwork = max(factor_lwork, generate_q_lwork)
     allocate(self%factor_work(optimal_lwork), stat=allocation_status)
@@ -378,20 +379,22 @@ contains
 
     !Only capacity is committed here. The active order, represented shift, and
     !validity flag are committed by a successful factorize_fresh operation.
-    self%capacity = max_n
+    self%capacity = capacity
     info = QR_SUCCESS
   end subroutine real_initialize
 
+  subroutine complex_initialize(self, capacity, info)
   !Subroutine complex_initialize prepares a complex QR state for Hermitian
-  !matrices of order not greater than max_n. It follows the allocation and
+  !matrices of order not greater than capacity. It follows the allocation and
   !failure semantics of real_initialize, with the following differences:
   !  - Q, R, tau, factor_work, update_work, and solve_work are complex(wp);
-  !  - real_work contains max_n real(wp) elements required by the complex
+  !  - real_work contains capacity real(wp) elements required by the complex
   !    qrupdate rotation kernels;
   !  - ZGEQRF and ZUNGQR supply the two factorization-work recommendations.
   !
   !  Input parameter:
-  !    max_n - Maximum matrix order supported by the state; must be positive.
+  !    capacity - Maximum matrix order supported by the state; must be
+  !               positive. It is a storage reservation, not the active order.
   !
   !  Input/output parameter:
   !    self  - The state to initialize. Its old factors, work arrays, metadata,
@@ -402,10 +405,10 @@ contains
   !            QR_ERR_FACTORIZATION, with the meanings documented for
   !            real_initialize.
   !
-  !On failure self is empty. On success capacity=max_n, n=0, and valid=false.
-  subroutine complex_initialize(self, max_n, info)
+  !On failure self is empty. On success self%capacity=capacity, n=0, and
+  !valid=false.
     class(qr_complex_state), intent(inout) :: self
-    integer, intent(in) :: max_n
+    integer, intent(in) :: capacity
     integer, intent(out) :: info
     integer :: allocation_status, factor_lwork, generate_q_lwork
     integer :: lapack_info, optimal_lwork
@@ -413,15 +416,15 @@ contains
 
     !Discard all previous complex and real state storage.
     call clear_complex_state(self)
-    if (max_n <= 0) then
+    if (capacity <= 0) then
       info = QR_ERR_INVALID_ARGUMENT
       return
     end if
 
-    allocate(self%q(max_n, max_n), self%r(max_n, max_n), &
-             self%tau(max_n), self%update_work(4 * max_n), &
-             self%solve_work(2 * max_n), &
-             self%real_work(max_n), stat=allocation_status)
+    allocate(self%q(capacity, capacity), self%r(capacity, capacity), &
+             self%tau(capacity), self%update_work(4 * capacity), &
+             self%solve_work(2 * capacity), &
+             self%real_work(capacity), stat=allocation_status)
     if (allocation_status /= 0) then
       call clear_complex_state(self)
       info = QR_ERR_ALLOCATION
@@ -438,23 +441,23 @@ contains
     !In a complex LAPACK workspace query the recommended integer workspace
     !length is returned in the real part of WORK(1). Query both stages and use
     !the larger recommendation.
-    call zgeqrf(max_n, max_n, self%q, max_n, self%tau, work_query, -1, &
+    call zgeqrf(capacity, capacity, self%q, capacity, self%tau, work_query, -1, &
                 lapack_info)
     if (lapack_info /= 0) then
       call clear_complex_state(self)
       info = QR_ERR_FACTORIZATION
       return
     end if
-    factor_lwork = max(max_n, ceiling(real(work_query(1), wp)))
+    factor_lwork = max(capacity, ceiling(real(work_query(1), wp)))
 
-    call zungqr(max_n, max_n, max_n, self%q, max_n, self%tau, &
+    call zungqr(capacity, capacity, capacity, self%q, capacity, self%tau, &
                 work_query, -1, lapack_info)
     if (lapack_info /= 0) then
       call clear_complex_state(self)
       info = QR_ERR_FACTORIZATION
       return
     end if
-    generate_q_lwork = max(max_n, ceiling(real(work_query(1), wp)))
+    generate_q_lwork = max(capacity, ceiling(real(work_query(1), wp)))
 
     optimal_lwork = max(factor_lwork, generate_q_lwork)
     allocate(self%factor_work(optimal_lwork), stat=allocation_status)
@@ -465,10 +468,11 @@ contains
     end if
     self%factor_work = cmplx(0.0_wp, 0.0_wp, kind=wp)
 
-    self%capacity = max_n
+    self%capacity = capacity
     info = QR_SUCCESS
   end subroutine complex_initialize
 
+  subroutine real_factorize_fresh(self, h, s, shift, info)
   !Subroutine real_factorize_fresh constructs a complete QR factorization of
   !the shifted real symmetric matrix
   !
@@ -510,7 +514,6 @@ contains
   !An argument error therefore preserves the previous factorization. A LAPACK
   !error occurs after the state buffers have been modified; in that case n is
   !returned as zero and valid is false so that partial factors cannot be used.
-  subroutine real_factorize_fresh(self, h, s, shift, info)
     class(qr_real_state), intent(inout) :: self
     real(wp), intent(in) :: h(:,:), s(:,:)
     real(wp), intent(in) :: shift
@@ -581,6 +584,7 @@ contains
     info = QR_SUCCESS
   end subroutine real_factorize_fresh
 
+  subroutine complex_factorize_fresh(self, h, s, shift, info)
   !Subroutine complex_factorize_fresh constructs a complete QR factorization
   !of the shifted complex Hermitian matrix
   !
@@ -608,7 +612,6 @@ contains
   !Hermitian structure is a mathematical precondition and is not checked. An
   !invalid argument preserves existing factors; a failure after ZGEQRF begins
   !leaves n=0 and valid=false.
-  subroutine complex_factorize_fresh(self, h, s, shift, info)
     class(qr_complex_state), intent(inout) :: self
     complex(wp), intent(in) :: h(:,:), s(:,:)
     real(wp), intent(in) :: shift
@@ -673,6 +676,7 @@ contains
     info = QR_SUCCESS
   end subroutine complex_factorize_fresh
 
+  subroutine real_replace_symmetric(self, idx, delta_h, delta_s, info)
   !Subroutine real_replace_symmetric replaces one row and the corresponding
   !column of a real symmetric problem by updating the stored QR factors. If
   !delta_h and delta_s denote the changes in the physical H and S columns, the
@@ -709,7 +713,6 @@ contains
   !All validation precedes modification of Q or R, so QR_ERR_INVALID_ARGUMENT
   !preserves the complete state. The validated qr1up calls have no numerical
   !failure return. No allocation is performed.
-  subroutine real_replace_symmetric(self, idx, delta_h, delta_s, info)
     class(qr_real_state), intent(inout) :: self
     integer, intent(in) :: idx
     real(wp), intent(in) :: delta_h(:), delta_s(:)
@@ -756,6 +759,7 @@ contains
     info = QR_SUCCESS
   end subroutine real_replace_symmetric
 
+  subroutine complex_replace_symmetric(self, idx, delta_h, delta_s, info)
   !Subroutine complex_replace_symmetric is the Hermitian counterpart of
   !real_replace_symmetric. For d=delta_h-self%shift*delta_s, the represented
   !Hermitian change is
@@ -788,7 +792,6 @@ contains
   !
   !Every rejection occurs before Q or R is modified. The routine allocates no
   !memory and increments each counter once, rather than once per rank-one term.
-  subroutine complex_replace_symmetric(self, idx, delta_h, delta_s, info)
     class(qr_complex_state), intent(inout) :: self
     integer, intent(in) :: idx
     complex(wp), intent(in) :: delta_h(:), delta_s(:)
@@ -859,6 +862,7 @@ contains
     info = QR_SUCCESS
   end subroutine complex_replace_symmetric
 
+  subroutine real_append_symmetric(self, h_column, s_column, info)
   !Subroutine real_append_symmetric increases the active real symmetric
   !problem from order n to n+1 without recomputing a fresh factorization.
   !h_column and s_column contain the complete new physical columns, including
@@ -899,7 +903,6 @@ contains
   !All recoverable failures are detected before qrinc modifies the factors and
   !therefore preserve the complete state. The validated qrinc and qrinr calls
   !have no numerical failure result. The operation allocates no memory.
-  subroutine real_append_symmetric(self, h_column, s_column, info)
     class(qr_real_state), intent(inout) :: self
     real(wp), intent(in) :: h_column(:), s_column(:)
     integer, intent(out) :: info
@@ -943,6 +946,7 @@ contains
     info = QR_SUCCESS
   end subroutine real_append_symmetric
 
+  subroutine complex_append_symmetric(self, h_column, s_column, info)
   !Subroutine complex_append_symmetric is the Hermitian counterpart of
   !real_append_symmetric. The supplied columns determine the new shifted
   !column and, by conjugation, the new bottom row. Because H and S are each
@@ -974,7 +978,6 @@ contains
   !
   !All rejection paths precede factor modification and preserve the complete
   !state. Caller arrays are not modified, and no allocation is performed.
-  subroutine complex_append_symmetric(self, h_column, s_column, info)
     class(qr_complex_state), intent(inout) :: self
     complex(wp), intent(in) :: h_column(:), s_column(:)
     integer, intent(out) :: info
@@ -1036,6 +1039,7 @@ contains
     info = QR_SUCCESS
   end subroutine complex_append_symmetric
 
+  subroutine real_delete_symmetric(self, idx, info)
   !Subroutine real_delete_symmetric removes row idx and column idx from an
   !active real symmetric factorization. If P deletes component idx, the new
   !represented matrix is the principal submatrix
@@ -1068,7 +1072,6 @@ contains
   !After success the now-inactive trailing row and column of Q and R are
   !cleared, preventing stale factor data from being exposed by later capacity
   !growth or white-box inspection. No allocation is performed.
-  subroutine real_delete_symmetric(self, idx, info)
     class(qr_real_state), intent(inout) :: self
     integer, intent(in) :: idx
     integer, intent(out) :: info
@@ -1106,6 +1109,7 @@ contains
     info = QR_SUCCESS
   end subroutine real_delete_symmetric
 
+  subroutine complex_delete_symmetric(self, idx, info)
   !Subroutine complex_delete_symmetric is the Hermitian counterpart of
   !real_delete_symmetric. Deletion introduces no numerical values and therefore
   !requires no diagonal-reality check or caller vector. qrdec and qrder preserve
@@ -1124,7 +1128,6 @@ contains
   !
   !All validation is completed before factor storage is modified. The routine
   !allocates no memory and rejects deletion from an order-one state.
-  subroutine complex_delete_symmetric(self, idx, info)
     class(qr_complex_state), intent(inout) :: self
     integer, intent(in) :: idx
     integer, intent(out) :: info
@@ -1163,6 +1166,8 @@ contains
     info = QR_SUCCESS
   end subroutine complex_delete_symmetric
 
+  subroutine real_solve(self, s, v_initial, x, lambda, tol, max_iter, &
+                        norm_mode, rel_acc, num_iter, info)
   !Subroutine real_solve finds one eigenvalue and its eigenvector for the real
   !generalized symmetric eigenvalue problem
   !
@@ -1254,8 +1259,6 @@ contains
   !
   !No allocation is performed. On an error detected before the first
   !iteration, x and lambda are zero, num_iter is zero, and rel_acc is huge.
-  subroutine real_solve(self, s, v_initial, x, lambda, tol, max_iter, &
-                        norm_mode, rel_acc, num_iter, info)
     class(qr_real_state), intent(inout) :: self
     real(wp), intent(in) :: s(:,:), v_initial(:)
     real(wp), intent(out) :: x(:)
@@ -1404,6 +1407,8 @@ contains
     end select
   end subroutine real_solve
 
+  subroutine complex_solve(self, s, v_initial, x, lambda, tol, max_iter, &
+                           norm_mode, rel_acc, num_iter, info)
   !Subroutine complex_solve finds one eigenvalue and its eigenvector for the
   !complex generalized Hermitian eigenvalue problem
   !
@@ -1486,8 +1491,6 @@ contains
   !
   !No allocation is performed. Before-iteration errors return zero x and
   !lambda, zero num_iter, and huge rel_acc.
-  subroutine complex_solve(self, s, v_initial, x, lambda, tol, max_iter, &
-                           norm_mode, rel_acc, num_iter, info)
     class(qr_complex_state), intent(inout) :: self
     complex(wp), intent(in) :: s(:,:), v_initial(:)
     complex(wp), intent(out) :: x(:)
@@ -1642,6 +1645,7 @@ contains
     end select
   end subroutine complex_solve
 
+  function real_norm_squared(n, x) result(norm_squared)
   !Function real_norm_squared computes the real Euclidean inner product
   !
   !                         x^T*x = sum(x(i)^2)
@@ -1656,7 +1660,6 @@ contains
   !
   !  Result:
   !    norm_squared - x^T*x for x(1:n).
-  function real_norm_squared(n, x) result(norm_squared)
     integer, intent(in) :: n
     real(wp), intent(in) :: x(:)
     real(wp) :: norm_squared
@@ -1668,6 +1671,7 @@ contains
     end do
   end function real_norm_squared
 
+  function complex_norm_squared(n, x) result(norm_squared)
   !Function complex_norm_squared computes the Hermitian Euclidean inner
   !product
   !
@@ -1683,7 +1687,6 @@ contains
   !
   !  Result:
   !    norm_squared - The real value x^H*x for x(1:n).
-  function complex_norm_squared(n, x) result(norm_squared)
     integer, intent(in) :: n
     complex(wp), intent(in) :: x(:)
     real(wp) :: norm_squared
@@ -1695,6 +1698,8 @@ contains
     end do
   end function complex_norm_squared
 
+  function real_direction_difference(n, x, alpha, y, x_norm_squared) &
+      result(relative_difference)
   !Function real_direction_difference computes the scale-independent change of
   !direction between two real vectors,
   !
@@ -1713,8 +1718,6 @@ contains
   !
   !  Result:
   !    relative_difference - Relative Euclidean norm shown above.
-  function real_direction_difference(n, x, alpha, y, x_norm_squared) &
-      result(relative_difference)
     integer, intent(in) :: n
     real(wp), intent(in) :: x(:), alpha, y(:), x_norm_squared
     real(wp) :: relative_difference
@@ -1730,6 +1733,8 @@ contains
     relative_difference = sqrt(difference_norm_squared / x_norm_squared)
   end function real_direction_difference
 
+  function complex_direction_difference(n, x, alpha, y, x_norm_squared) &
+      result(relative_difference)
   !Function complex_direction_difference computes the convergence measure
   !used to compare two successive complex inverse iterates,
   !
@@ -1748,8 +1753,6 @@ contains
   !
   !  Result:
   !    relative_difference - Relative Euclidean norm shown above.
-  function complex_direction_difference(n, x, alpha, y, x_norm_squared) &
-      result(relative_difference)
     integer, intent(in) :: n
     complex(wp), intent(in) :: x(:), alpha, y(:)
     real(wp), intent(in) :: x_norm_squared
@@ -1765,6 +1768,7 @@ contains
     relative_difference = sqrt(difference_norm_squared / x_norm_squared)
   end function complex_direction_difference
 
+  function complex_max_abs_real_or_imag(n, x) result(max_component)
   !Function complex_max_abs_real_or_imag returns
   !
   !       max_i( max(abs(real(x(i))),abs(imag(x(i)))) )
@@ -1779,7 +1783,6 @@ contains
   !
   !  Result:
   !    max_component - Largest magnitude of any real or imaginary component.
-  function complex_max_abs_real_or_imag(n, x) result(max_component)
     integer, intent(in) :: n
     complex(wp), intent(in) :: x(:)
     real(wp) :: max_component
@@ -1792,6 +1795,7 @@ contains
     end do
   end function complex_max_abs_real_or_imag
 
+  function real_upper_factor_is_singular(r, n) result(is_singular)
   !Function real_upper_factor_is_singular tests whether a real
   !upper-triangular factor can be used safely by an unguarded triangular solve.
   !The active factor scale is
@@ -1813,7 +1817,6 @@ contains
   !  Result:
   !    is_singular - True when at least one active diagonal element satisfies
   !                  the threshold above; false otherwise.
-  function real_upper_factor_is_singular(r, n) result(is_singular)
     real(wp), intent(in) :: r(:,:)
     integer, intent(in) :: n
     logical :: is_singular
@@ -1831,6 +1834,7 @@ contains
     end do
   end function real_upper_factor_is_singular
 
+  function complex_upper_factor_is_singular(r, n) result(is_singular)
   !Function complex_upper_factor_is_singular tests whether a complex
   !upper-triangular factor can be used safely by ZTRSV. The factor scale is the
   !largest complex modulus in R(1:n,1:n), and the diagonal threshold is
@@ -1844,7 +1848,6 @@ contains
   !  Result:
   !    is_singular - True when a diagonal modulus is not greater than the
   !                  threshold; false otherwise.
-  function complex_upper_factor_is_singular(r, n) result(is_singular)
     complex(wp), intent(in) :: r(:,:)
     integer, intent(in) :: n
     logical :: is_singular
