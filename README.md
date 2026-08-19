@@ -123,6 +123,48 @@ build exposes private state components with `QRLINALG_TESTING` solely so these
 invariants can be inspected without enlarging the public API. Normal Make and
 fpm builds retain private components and contain no test-only code.
 
+### Structural-update drift stress test
+
+The deterministic stress driver measures numerical drift caused only by
+repeated QR updates. It uses well-conditioned order-eight problems with
+`S=I`. Every replacement is followed by its exact negative, and every append
+is followed by deletion of the appended final row and column. The physical
+shifted matrix therefore returns to the same initial value before each
+measurement.
+
+Run one working precision or all supported working kinds with:
+
+```sh
+make stress PREC=8
+make stress-all
+make stress PREC=8 STRESS_CYCLES=100000
+```
+
+The default is 10,000 reversible cycles. Output is CSV on standard output at
+cycle zero, powers of two, and the final cycle. It reports factor
+reconstruction, orthogonality or unitarity, the forward and residual defects
+of the complete direct-solve operator, maximum normwise backward error, and
+the corresponding values from an untouched fresh factorization. The
+`backward_degradation` column compares updated and fresh backward errors after
+flooring each at `n*epsilon(1.0_wp)`. It is therefore one while both errors
+remain below the expected working-precision floor and grows when accumulated
+update error rises above that floor.
+
+Replacement is exercised at update-vector scales `sqrt(epsilon(1.0_wp))` and
+`0.01_wp`. Real and complex paths are reported separately. During each
+append/delete round trip, the `append` row measures the intermediate
+order-nine factors against a fresh order-nine factorization, and the `delete`
+row measures the restored order-eight factors against the original fresh
+factorization. The driver is intentionally diagnostic rather than part of
+`make check`: its numerical curves provide evidence for a refactorization
+policy without treating a provisional update count as an API correctness
+boundary.
+
+The stress build uses the selected `CONFIG`, which defaults to `release` so
+the measurements reflect the production optimization mode. Pass
+`CONFIG=debug` to add the compiler's runtime checks while investigating a
+suspected failure.
+
 For an optimized regression run at one precision, use:
 
 ```sh

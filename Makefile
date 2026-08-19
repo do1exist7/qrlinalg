@@ -71,6 +71,8 @@ TEST_NAMES := test_initialization test_factorization test_replacement \
 	test_inverse_iteration_failures
 TEST_EXES := $(addprefix $(BUILD_DIR)/,$(TEST_NAMES))
 TEST_SUPPORT_OBJECT := $(BUILD_DIR)/test_support.o
+STRESS_CYCLES ?= 10000
+STRESS_EXE := $(BUILD_DIR)/stress_update_drift
 
 PYTHON ?= python3
 DATA_DIR ?= data
@@ -103,8 +105,8 @@ OBJECTS := \
 	$(BUILD_DIR)/qrupdate.o \
 	$(BUILD_DIR)/qrlinalg.o
 
-.PHONY: all release debug build check check-one test test-one differential-build \
-	differential-test compare-orig clean
+.PHONY: all release debug build check check-one test test-one stress stress-one \
+	stress-all differential-build differential-test compare-orig clean
 
 all: release
 
@@ -129,6 +131,20 @@ test:
 
 test-one: $(TEST_EXES)
 	@set -e; for test_exe in $(TEST_EXES); do $$test_exe; done
+
+stress:
+	$(MAKE) CONFIG=$(CONFIG) PREC=$(PREC) \
+		BUILD_DIR=build/stress-$(CONFIG)-wp$(PREC) \
+		QRLINALG_TEST_FLAGS=-DQRLINALG_TESTING stress-one \
+		STRESS_CYCLES=$(STRESS_CYCLES)
+
+stress-all:
+	$(MAKE) stress PREC=8 STRESS_CYCLES=$(STRESS_CYCLES)
+	$(MAKE) stress PREC=10 STRESS_CYCLES=$(STRESS_CYCLES)
+	$(MAKE) stress PREC=16 STRESS_CYCLES=$(STRESS_CYCLES)
+
+stress-one: $(STRESS_EXE)
+	$(STRESS_EXE) $(STRESS_CYCLES)
 
 differential-build: $(DIFF_NEW_EXE) $(DIFF_ORIG_EXE)
 
@@ -182,6 +198,9 @@ $(TEST_SUPPORT_OBJECT): test/test_support.f90 $(LIB)
 
 $(BUILD_DIR)/test_%: test/test_%.f90 $(TEST_SUPPORT_OBJECT) $(LIB)
 	$(FC) $(FFLAGS) $(OWN_WARNING_FLAGS) $< $(TEST_SUPPORT_OBJECT) $(LIB) -o $@
+
+$(STRESS_EXE): test/stress_update_drift.f90 $(LIB)
+	$(FC) $(FFLAGS) $(OWN_WARNING_FLAGS) $< $(LIB) -o $@
 
 $(DIFF_NEW_EXE): $(DIFF_SOURCE_DIR)/qrlinalg_driver.f90 $(LIB) | $(DIFF_NEW_DIR)
 	$(FC) $(FFLAGS) $(OWN_WARNING_FLAGS) $< $(LIB) -o $@
