@@ -60,7 +60,8 @@ module_flags=("$module_flag" "$module_dir" -I "$module_dir")
   "${preprocess_flags[@]}" -c "$repository_dir/src/wp_def_${precision}.f90" \
   -o "$object_dir/wp_def.o"
 "$compiler" "${optimization_flags[@]}" "${module_flags[@]}" \
-  "${fixed_flags[@]}" -c "$repository_dir/src/qrupdate/BLAS.f" \
+  "${fixed_flags[@]}" "${preprocess_flags[@]}" \
+  -c "$repository_dir/src/qrupdate/BLAS.f" \
   -o "$object_dir/blas.o"
 "$compiler" "${optimization_flags[@]}" "${module_flags[@]}" \
   "${fixed_flags[@]}" -c "$repository_dir/src/qrupdate/LAPACK.f" \

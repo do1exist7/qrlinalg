@@ -903,6 +903,11 @@
 *> \endverbatim
 *>
 *  =====================================================================
+#ifndef QRLINALG_WP
+#error "QRLINALG_WP must match the selected wp_def module"
+#elif QRLINALG_WP != 8 && QRLINALG_WP != 10 && QRLINALG_WP != 16
+#error "QRLINALG_WP must be 8, 10, or 16"
+#endif
       SUBROUTINE DGEMM(TRANSA,TRANSB,M,N,K,ALPHA,A,LDA,B,LDB,BETA,C,LDC)
       USE wp_def      
 *
@@ -1043,13 +1048,14 @@
 *
 *           Form  C := alpha*A**T*B + beta*C
 *
-*           Four output columns share each pair of rows from A at wp=8.  The
-*           eight independent accumulators keep partial sums in registers
-*           while both input panels are traversed contiguously down their
-*           columns.  Extended real kinds use the scalar reference ordering
-*           because their accumulators do not have packed SIMD registers.
+*           The selected precision contributes exactly one implementation to
+*           this build, so tuning another kind cannot perturb this hot loop.
 *
-              IF (wp.EQ.8) THEN
+#if QRLINALG_WP == 8
+*           Four output columns share each pair of rows from A.  Eight
+*           independent accumulators keep partial sums in registers while
+*           both input panels are traversed contiguously down their columns.
+*
                 J_FULL = N - MOD(N,4)
                 DO J = 1,J_FULL,4
                   DO I = 1,M-1,2
@@ -1135,7 +1141,58 @@
                       END IF
   110             CONTINUE
   120         CONTINUE
-              ELSE
+#elif QRLINALG_WP == 10
+*           One row and four columns fit the accumulators and current operands
+*           in the extended-real x87 register stack.
+*
+                  J_FULL = N - MOD(N,4)
+                  DO J = 1,J_FULL,4
+                      DO I = 1,M
+                          TEMP11 = ZERO
+                          TEMP12 = ZERO
+                          TEMP13 = ZERO
+                          TEMP14 = ZERO
+                          DO L = 1,K
+                              A_FIRST = A(L,I)
+                              TEMP11 = TEMP11 + A_FIRST*B(L,J)
+                              TEMP12 = TEMP12 + A_FIRST*B(L,J+1)
+                              TEMP13 = TEMP13 + A_FIRST*B(L,J+2)
+                              TEMP14 = TEMP14 + A_FIRST*B(L,J+3)
+                          END DO
+                          IF (BETA.EQ.ZERO) THEN
+                              C(I,J) = ALPHA*TEMP11
+                              C(I,J+1) = ALPHA*TEMP12
+                              C(I,J+2) = ALPHA*TEMP13
+                              C(I,J+3) = ALPHA*TEMP14
+                          ELSE IF (BETA.EQ.ONE) THEN
+                              C(I,J) = ALPHA*TEMP11 + C(I,J)
+                              C(I,J+1) = ALPHA*TEMP12 + C(I,J+1)
+                              C(I,J+2) = ALPHA*TEMP13 + C(I,J+2)
+                              C(I,J+3) = ALPHA*TEMP14 + C(I,J+3)
+                          ELSE
+                              C(I,J) = ALPHA*TEMP11 + BETA*C(I,J)
+                              C(I,J+1) = ALPHA*TEMP12 + BETA*C(I,J+1)
+                              C(I,J+2) = ALPHA*TEMP13 + BETA*C(I,J+2)
+                              C(I,J+3) = ALPHA*TEMP14 + BETA*C(I,J+3)
+                          END IF
+                      END DO
+                  END DO
+                  DO J = J_FULL + 1,N
+                      DO I = 1,M
+                          TEMP = ZERO
+                          DO L = 1,K
+                              TEMP = TEMP + A(L,I)*B(L,J)
+                          END DO
+                          IF (BETA.EQ.ZERO) THEN
+                              C(I,J) = ALPHA*TEMP
+                          ELSE
+                              C(I,J) = ALPHA*TEMP + BETA*C(I,J)
+                          END IF
+                      END DO
+                  END DO
+#else
+*           Quadruple precision retains the scalar reference ordering.
+*
                   DO J = 1,N
                       DO I = 1,M
                           TEMP = ZERO
@@ -1149,17 +1206,69 @@
                           END IF
                       END DO
                   END DO
-              END IF
+#endif
           END IF
       ELSE
           IF (NOTA) THEN
 *
 *           Form  C := alpha*A*B**T + beta*C
 *
-*           Scale C once before accumulating.  Four adjacent output columns
-*           reuse each contiguous vector from A.  Row tiles keep those four
-*           columns of C and one column of A resident in L1 cache for the
-*           complete K panel; at wp=8 a full tile occupies about 10 KiB.
+*           The selected precision contributes exactly one implementation to
+*           this build, so tuning another kind cannot perturb this hot loop.
+*
+#if QRLINALG_WP == 10
+*           Four adjacent rows of one output column remain in accumulators for
+*           the complete K reduction.
+*
+                  I_LIMIT = M - MOD(M,4)
+                  DO J = 1,N
+                      DO I = 1,I_LIMIT,4
+                          IF (BETA.EQ.ZERO) THEN
+                              TEMP11 = ZERO
+                              TEMP12 = ZERO
+                              TEMP13 = ZERO
+                              TEMP14 = ZERO
+                          ELSE IF (BETA.EQ.ONE) THEN
+                              TEMP11 = C(I,J)
+                              TEMP12 = C(I+1,J)
+                              TEMP13 = C(I+2,J)
+                              TEMP14 = C(I+3,J)
+                          ELSE
+                              TEMP11 = BETA*C(I,J)
+                              TEMP12 = BETA*C(I+1,J)
+                              TEMP13 = BETA*C(I+2,J)
+                              TEMP14 = BETA*C(I+3,J)
+                          END IF
+                          DO L = 1,K
+                              B_FIRST = ALPHA*B(J,L)
+                              TEMP11 = TEMP11 + A(I,L)*B_FIRST
+                              TEMP12 = TEMP12 + A(I+1,L)*B_FIRST
+                              TEMP13 = TEMP13 + A(I+2,L)*B_FIRST
+                              TEMP14 = TEMP14 + A(I+3,L)*B_FIRST
+                          END DO
+                          C(I,J) = TEMP11
+                          C(I+1,J) = TEMP12
+                          C(I+2,J) = TEMP13
+                          C(I+3,J) = TEMP14
+                      END DO
+                      DO I = I_LIMIT + 1,M
+                          IF (BETA.EQ.ZERO) THEN
+                              TEMP = ZERO
+                          ELSE IF (BETA.EQ.ONE) THEN
+                              TEMP = C(I,J)
+                          ELSE
+                              TEMP = BETA*C(I,J)
+                          END IF
+                          DO L = 1,K
+                              B_FIRST = ALPHA*B(J,L)
+                              TEMP = TEMP + A(I,L)*B_FIRST
+                          END DO
+                          C(I,J) = TEMP
+                      END DO
+                  END DO
+#else
+*           Scale C once before four output columns reuse a contiguous vector
+*           from A.
 *
               IF (BETA.EQ.ZERO) THEN
                   DO 130 J = 1,N
@@ -1174,33 +1283,37 @@
                       END DO
   140             CONTINUE
               END IF
-              J_FULL = N - MOD(N,4)
-              DO J = 1,J_FULL,4
-                  DO I_BLOCK = 1,M,ROW_BLOCK
-                      I_LIMIT = MIN(M,I_BLOCK+ROW_BLOCK-1)
-                      DO L = 1,K
-                          B_FIRST = ALPHA*B(J,L)
-                          B_SECOND = ALPHA*B(J+1,L)
-                          B_THIRD = ALPHA*B(J+2,L)
-                          B_FOURTH = ALPHA*B(J+3,L)
-                          DO I = I_BLOCK,I_LIMIT
-                              A_FIRST = A(I,L)
-                              C(I,J) = C(I,J) + A_FIRST*B_FIRST
-                              C(I,J+1) = C(I,J+1) + A_FIRST*B_SECOND
-                              C(I,J+2) = C(I,J+2) + A_FIRST*B_THIRD
-                              C(I,J+3) = C(I,J+3) + A_FIRST*B_FOURTH
+                  J_FULL = N - MOD(N,4)
+                  DO J = 1,J_FULL,4
+                      DO I_BLOCK = 1,M,ROW_BLOCK
+                          I_LIMIT = MIN(M,I_BLOCK+ROW_BLOCK-1)
+                          DO L = 1,K
+                              B_FIRST = ALPHA*B(J,L)
+                              B_SECOND = ALPHA*B(J+1,L)
+                              B_THIRD = ALPHA*B(J+2,L)
+                              B_FOURTH = ALPHA*B(J+3,L)
+                              DO I = I_BLOCK,I_LIMIT
+                                  A_FIRST = A(I,L)
+                                  C(I,J) = C(I,J) + A_FIRST*B_FIRST
+                                  C(I,J+1) = C(I,J+1) +
+     +                                       A_FIRST*B_SECOND
+                                  C(I,J+2) = C(I,J+2) +
+     +                                       A_FIRST*B_THIRD
+                                  C(I,J+3) = C(I,J+3) +
+     +                                       A_FIRST*B_FOURTH
+                              END DO
                           END DO
                       END DO
                   END DO
-              END DO
-              DO 170 J = J_FULL + 1,N
-                  DO 160 L = 1,K
-                      TEMP = ALPHA*B(J,L)
-                      DO 150 I = 1,M
-                          C(I,J) = C(I,J) + TEMP*A(I,L)
-  150                 CONTINUE
-  160             CONTINUE
-  170         CONTINUE
+                  DO 170 J = J_FULL + 1,N
+                      DO 160 L = 1,K
+                          TEMP = ALPHA*B(J,L)
+                          DO 150 I = 1,M
+                              C(I,J) = C(I,J) + TEMP*A(I,L)
+  150                     CONTINUE
+  160                 CONTINUE
+  170             CONTINUE
+#endif
           ELSE
 *
 *           Form  C := alpha*A**T*B**T + beta*C

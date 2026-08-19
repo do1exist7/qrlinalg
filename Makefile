@@ -152,7 +152,7 @@ $(BUILD_DIR)/wp_def.o: $(SRC_DIR)/wp_def_$(PREC).f90 | $(BUILD_DIR)
 	$(FC) $(FFLAGS) $(WP_FLAGS) -c $< -o $@
 
 $(BUILD_DIR)/qrupdate_blas.o: $(QRUPDATE_DIR)/BLAS.f $(BUILD_DIR)/wp_def.o | $(BUILD_DIR)
-	$(FC) $(FFLAGS) $(FIXED_FLAGS) -c $< -o $@
+	$(FC) $(FFLAGS) $(FIXED_FLAGS) $(WP_FLAGS) -c $< -o $@
 
 $(BUILD_DIR)/qrupdate_lapack.o: $(QRUPDATE_DIR)/LAPACK.f $(BUILD_DIR)/wp_def.o | $(BUILD_DIR)
 	$(FC) $(FFLAGS) $(FIXED_FLAGS) -c $< -o $@
@@ -196,7 +196,8 @@ $(ORIG_GLOBVARS_OBJECT): $(ORIG_SOURCE_DIR)/globvars.f90 $(ORIG_WP_OBJECT) | $(D
 	$(FC) $(ORIG_MODULE_FLAGS) $(CONFIG_FLAGS) -c $< -o $@
 
 $(ORIG_BLAS_OBJECT): $(QRUPDATE_DIR)/BLAS.f $(ORIG_WP_OBJECT) | $(DIFF_ORIG_DIR)
-	$(FC) $(ORIG_MODULE_FLAGS) $(CONFIG_FLAGS) $(FIXED_FLAGS) -c $< -o $@
+	$(FC) $(ORIG_MODULE_FLAGS) $(CONFIG_FLAGS) $(FIXED_FLAGS) $(WP_FLAGS) \
+		-c $< -o $@
 
 $(ORIG_LINALG_OBJECT): $(ORIG_SOURCE_DIR)/linalg.f90 $(ORIG_GLOBVARS_OBJECT) | $(DIFF_ORIG_DIR)
 	$(FC) $(ORIG_MODULE_FLAGS) $(CONFIG_FLAGS) -c $< -o $@

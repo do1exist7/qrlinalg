@@ -72,7 +72,8 @@ compile_qr() {
   local mf=("-$module_output_flag" "$mod" -I "$mod")
   "$compiler" "${opt_flags[@]}" "${mf[@]}" "${preprocess_flags[@]}" -c \
     "$repository_dir/src/wp_def_${precision}.f90" -o "$obj/wp_def.o"
-  "$compiler" "${opt_flags[@]}" "${mf[@]}" "${fixed_flags[@]}" -c \
+  "$compiler" "${opt_flags[@]}" "${mf[@]}" "${fixed_flags[@]}" \
+    "${preprocess_flags[@]}" -c \
     "$repository_dir/src/qrupdate/BLAS.f" -o "$obj/blas.o"
   "$compiler" "${opt_flags[@]}" "${mf[@]}" "${fixed_flags[@]}" -c \
     "$repository_dir/src/qrupdate/LAPACK.f" -o "$obj/lapack.o"
@@ -116,7 +117,8 @@ compile_ldlt() {
     "$repository_dir/orig/claude/wp_def_${precision}.f90" -o "$obj/wp_def.o"
   "$compiler" "${opt_flags[@]}" "${mf[@]}" -c \
     "$repository_dir/orig/claude/globvars.f90" -o "$obj/globvars.o"
-  "$compiler" "${opt_flags[@]}" "${mf[@]}" "${fixed_flags[@]}" -c \
+  "$compiler" "${opt_flags[@]}" "${mf[@]}" "${fixed_flags[@]}" \
+    "${preprocess_flags[@]}" -c \
     "$repository_dir/src/qrupdate/BLAS.f" -o "$obj/blas.o"
   "$compiler" "${opt_flags[@]}" "${mf[@]}" -c \
     "$repository_dir/orig/claude/linalg.f90" -o "$obj/linalg.o"

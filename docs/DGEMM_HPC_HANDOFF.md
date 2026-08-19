@@ -27,12 +27,22 @@ Single-threaded OpenBLAS completed the full QR in 137.1 ms. It may use
 different floating-point transformations, so this is headroom rather than an
 equal implementation comparison.
 
-At `wp=10`, enabling the fused TN kernel regressed performance. The committed
-dispatch therefore uses it only when `wp == 8`; extended kinds retain scalar
-TN. The tiled NT path remains enabled for all kinds. Laptop n=1000 timing
-improved from about 2.3915 s to 2.2551 s (1.06x). Isolated final timings were
-about 51.05 ms for TN and 54.47 ms for NT. NT row blocks 128, 256, and 512 gave
-only a noisy two-percent advantage to 512, so the shared value remained 256.
+At `wp=10`, enabling the eight-accumulator 2-by-4 TN kernel regressed
+performance because extended-real scalar arithmetic exhausted the x87 register
+stack. A follow-up uses a 1-by-4 TN tile and a 4-by-1 NT tile, each with four
+accumulators. On the same pinned WSL2 laptop with gfortran 15.2, the retained
+follow-up produced these medians:
+
+| wp=10 measurement | Previous | Follow-up | Speedup |
+| --- | ---: | ---: | ---: |
+| TN, M=968 N=32 K=968 | 45.24 ms | 26.60 ms | 1.70x |
+| NT, M=968 N=968 K=32 | 51.86 ms | 26.69 ms | 1.94x |
+| DGEQRF stage, n=1000 | 1.170 s | 0.721 s | 1.62x |
+| DORGQR stage, n=1000 | 1.193 s | 0.741 s | 1.61x |
+
+The complete two-stage QR median improved from 2.363 s to 1.462 s (1.62x).
+Earlier timings in a noisier session were slower in absolute terms, so only
+contemporaneous pinned pairs were used for the table.
 
 Validation passed `make check` at `wp=8`, `wp=10`, and `wp=16`, plus a release
 build. The DGEMM test covers N/T/C, dimensions zero through three, rectangular
@@ -41,17 +51,27 @@ fast and fallback paths, padded leading dimensions, alpha/beta 0, 1, -1, and
 
 ## Current algorithms
 
+`BLAS.f` selects precision-specific hot kernels with the `QRLINALG_WP`
+preprocessor macro. Each build therefore presents only one TN and one NT
+implementation to the Fortran compiler; it does not rely on optimization of a
+Fortran condition involving the `wp` parameter. Missing or unsupported macro
+values stop compilation. Make, fpm, differential, and benchmark builds pass
+the same macro value used to select `wp_def`.
+
 The `wp=8` TN (`A**T*B`) fast path computes a 2-by-4 C microtile with eight
 accumulators. Its K loop reads `A(:,i:i+1)` and `B(:,j:j+3)` contiguously,
-reuses two A and four B values, and writes each C element once. Odd M and N
-remainders are scalar. There is no packing, explicit SIMD, intrinsic, OpenMP,
-or allocation. `wp=10` and `wp=16` use the original scalar dot-product path.
+reuses two A and four B values, and writes each C element once. At `wp=10`, a
+1-by-4 tile uses four accumulators, reuses one A value across four outputs, and
+fits the current operands without x87 spills. Odd M and N remainders are
+scalar. `wp=16` retains the original scalar dot-product path. There is no
+packing, explicit SIMD, intrinsic, OpenMP, or allocation.
 
-NT (`A*B**T`) first scales/zeros C, groups four output columns, and tiles M
-with `ROW_BLOCK=256`. For every K it loads four B scalars and walks contiguously
-through one A column and four C columns. It updates C once per K. At `wp=8`,
-the principal hot set is roughly 10 KiB. A compiler may store `real(kind=10)`
-in 16 bytes, doubling that footprint; measure `storage_size(1.0_wp)/8`.
+At `wp=10`, NT (`A*B**T`) computes four adjacent rows of one output column.
+The four C values remain in accumulators for the complete K reduction, while
+each B value is reused across four contiguous A values. C is read at most once
+and written once instead of being updated from memory for every K. Scalar row
+remainders preserve the same K order and beta handling. Other kinds first
+scale or zero C, group four output columns, and tile M with `ROW_BLOCK=256`.
 
 NN and TT remain essentially the Netlib reference paths, as do scalar tails.
 This is intentional because the measured QR workload was dominated by TN and
@@ -149,10 +169,10 @@ repairing a strided load.
    larger register tile. Difficulty is medium; rounding risk is low-to-medium
    because reduction order may change. Preserve the extended-kind fallback.
 
-2. **Tune/specialize NT for small K.** Test NR values matched to the target
-   vector/register file and MB values derived from the cache model. K=32 may
-   not amortize general packing. Likely benefit is medium, difficulty low-to-
-   medium, and numerical risk low if K order stays unchanged.
+2. **Tune/specialize NT for small K at `wp=8`.** The retained `wp=10` 4-by-1
+   accumulator tile resolves the repeated-C-traffic bottleneck locally. For
+   `wp=8`, test NR values matched to the target vector/register file and MB
+   values derived from the cache model. K=32 may not amortize general packing.
 
 3. **Re-profile the full QR after every retained change.** Only specialize NN,
    TT, or another kernel if its measured contribution becomes material. This
@@ -175,10 +195,10 @@ or seriously regresses small matrices.
 
 ## Smallest decisive next experiment
 
-Do not modify production DGEMM before collecting a target-node shape histogram,
-vectorization report, assembly classification, and counters for TN
-968x32x968 and NT 968x968x32 (or the cluster's actual dominant equivalents).
-Then change only TN at `wp=8`, choosing between a packed/SIMD-friendly panel and
-a larger unpacked register tile according to that evidence. Compare it against
-commit `dde28f1` in the isolated TN benchmark and complete QR. This preserves
-the proven 2.88x result while decisively testing the leading bottleneck.
+First verify both new `wp=10` tiles on the target node with its production
+compiler, actual shape histogram, counters, and complete QR timings. Then
+change only TN at `wp=8`, choosing between a packed/SIMD-friendly panel and a
+larger unpacked register tile according to target evidence. Compare against
+commit `dde28f1` and the current branch in the isolated benchmark and complete
+QR. This preserves the proven `wp=8` result while separating target-specific
+work from the retained extended-real optimization.

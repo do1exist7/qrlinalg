@@ -106,6 +106,16 @@ Never replace the bundled BLAS/LAPACK with a conventional system
 double-precision library for `wp=10` or `wp=16`. Any new external BLAS/LAPACK
 call from `qrlinalg.f90` must have an explicit interface importing `wp`.
 
+Precision-specific optimized kernels must be selected by preprocessing with
+`QRLINALG_WP`, so a build compiles only the kernel for its selected precision.
+Do not place kernels for different working kinds behind Fortran conditions
+such as `if (wp == 10)`: even when `wp` is a parameter, shared control flow can
+change generated code for an otherwise untouched precision. Every Make, fpm,
+benchmark, and differential build path that compiles a preprocessed numerical
+source must define the same `QRLINALG_WP` value as its selected `wp_def`.
+Preserve non-target precision blocks when tuning one kind, and benchmark both
+the target kind and any established optimized kind before retaining a change.
+
 ## State and ownership invariants
 
 The concrete real and complex state types are independent; do not introduce
