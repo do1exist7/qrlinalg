@@ -58,6 +58,9 @@ leave factors, dimensions, validity, shifts, and counters unchanged.
   inverse-iteration regimes.
 - `test/differential/` contains the optional data-driven comparison harness
   for qrlinalg and the original `GSEPIIS`/`GHEPIIS` implementation.
+- `benchmark/` contains standalone operation-specific qrlinalg and
+  pristine-LDLT timing drivers, shell build/run/perf entry points, Python
+  visualization tools, shared dataset input support, and benchmark guidance.
 - `orig/` contains reference implementations, including the pristine
   `GSEPIIS` and `GHEPIIS` algorithms. Treat all files under `orig/` as
   read-only reference material.
@@ -378,6 +381,8 @@ make debug PREC=10
 make release PREC=16 COMPILER=ifx
 make check
 make compare-orig PREC=8 DATA_DIR=/path/to/data
+./benchmark/run_qr.sh --precision 8 --repetitions 5
+./benchmark/run_ldlt.sh --precision 8 --repetitions 5
 ```
 
 Supported compiler selectors are `gfortran`, `ifort`, `ifx`, and `nvfortran`.

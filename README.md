@@ -36,6 +36,20 @@ fpm build
 For `wp=10` or `wp=16`, change the single `QRLINALG_WP` macro in `fpm.toml`
 before building. This is a compile-time choice; one library contains one `wp`.
 
+## Benchmarks
+
+Build and run the independent QR or pristine-LDLT timing suites directly:
+
+```sh
+./benchmark/run_qr.sh --sizes 100,200,500,1000 --repetitions 5
+./benchmark/run_ldlt.sh --sizes 100,200,500,1000 --repetitions 5
+```
+
+Each operation has a separate executable and prints verbose convergence and
+timing metrics plus one machine-readable CSV record. These scripts do not use
+the Makefile. Perf collection, visualization, and comparison limitations are
+documented in `benchmark/README.md`.
+
 ## Tests
 
 Run the complete permanent test suite with:
