@@ -44,10 +44,38 @@ The complete two-stage QR median improved from 2.363 s to 1.462 s (1.62x).
 Earlier timings in a noisier session were slower in absolute terms, so only
 contemporaneous pinned pairs were used for the table.
 
+A subsequent `wp=8` complex optimization targets only `ZGEMM(C,N)`.  Runtime
+shape profiling confirmed the highest-weight call as M=968, N=32, K=968 with
+LDA=LDB=LDC=1000, alpha=1, and beta=1.  A 1-by-4 output tile reuses one
+conjugated A value across four B columns and maintains four independent complex
+accumulators.  Two order-reversed pinned comparisons measured 51.08-53.42 ms
+before and 33.16-34.35 ms after, approximately 1.55x faster.
+
+The attempted 4-by-1 `ZGEMM(N,C)` tile did not survive the retention gate: its
+20.78 ms median was slightly slower than the 20.09 ms reference, so the
+original N,C implementation remains.  Paired public fresh-QR medians were:
+
+| wp=8 fresh factorization | Before complex C,N | After | Speedup |
+| --- | ---: | ---: | ---: |
+| Real n=500 | 50.06 ms | 47.17 ms | 1.06x (noise-sensitive) |
+| Real n=1000 | 372.99 ms | 375.52 ms | 0.99x (unchanged path) |
+| Complex n=500 | 192.84 ms | 165.92 ms | 1.16x |
+| Complex n=1000 | 2.035 s | 1.884 s | 1.08x |
+
+Internally gated counters at complex n=1000 fell from 6.061 to 4.814 billion
+cycles and from 9.156 to 8.347 billion instructions; IPC increased from 1.51
+to 1.73.  ZGEMM remained dominant but fell from 93.97% to 92.34% of sampled
+cycles, corresponding to about a 22% reduction in its absolute cycle count.
+Wall-clock timings on this VM varied materially with host load, so counters,
+paired medians, minima, and validation must be considered together.
+
 Validation passed `make check` at `wp=8`, `wp=10`, and `wp=16`, plus a release
 build. The DGEMM test covers N/T/C, dimensions zero through three, rectangular
 fast and fallback paths, padded leading dimensions, alpha/beta 0, 1, -1, and
 0.375, output padding, and NaN-poisoned C when beta=0.
+The parallel ZGEMM test covers all transpose/conjugation pairs, complex
+alpha/beta values, optimized-path tiles and tails, padded leading dimensions,
+and the same beta=0 ownership rule.
 
 ## Current algorithms
 
@@ -76,6 +104,12 @@ scale or zero C, group four output columns, and tile M with `ROW_BLOCK=256`.
 NN and TT remain essentially the Netlib reference paths, as do scalar tails.
 This is intentional because the measured QR workload was dominated by TN and
 NT. Re-profile before specializing anything else.
+
+For complex arithmetic, only the `wp=8` C,N path is specialized.  It computes
+four adjacent output columns for one row with four independent accumulators;
+conjugation is applied once when A is loaded.  Column remainders and every
+other precision or transpose combination retain the reference loops.  The N,C
+candidate was measured and rejected, so it must not be described as optimized.
 
 ## Facts versus unresolved hypotheses
 
@@ -159,6 +193,74 @@ its copy must be amortized over sufficient output reuse. Since current TN A
 and B accesses are already contiguous, packing is a hypothesis: its possible
 benefits are alignment, simpler addressing, and SIMD-friendly layout, not
 repairing a strided load.
+
+## Retuning after moving to another machine
+
+Treat the current tile shapes and `ROW_BLOCK=256` as defaults for the laptop,
+not portable constants. Retune only after rebuilding with the production
+compiler and `-march=native` (or the target compiler's equivalent). Do not copy
+objects, vectorization conclusions, or timing thresholds from the previous
+machine.
+
+Tune in this order:
+
+1. Build and validate the unchanged branch for each required `wp`. Pin one
+   process to one physical core, keep frequency policy and SMT placement fixed,
+   and record `storage_size(0.0_wp)/8`; kind 10 must not be assumed to occupy
+   ten bytes.
+2. Regenerate the QR call-shape histogram. Use its highest-weight TN and NT
+   shapes rather than assuming that 968x32x968 and 968x968x32 remain dominant.
+   A change to LAPACK `NB` or the compiler can change these shapes.
+3. Record unchanged isolated-kernel and complete-QR medians. Use at least two
+   warmups and seven timed samples, with enough calls for 0.5-1.0 seconds per
+   sample. A typical pinned invocation is:
+
+   ```sh
+   taskset -c PHYSICAL_CORE \
+     build/benchmarks/wp8/dgemm/bin/dgemm_benchmark \
+     T N M N K 1 0 CALLS_PER_SAMPLE 9
+
+   taskset -c PHYSICAL_CORE \
+     build/benchmarks/wp8/dgemm/bin/zgemm_benchmark \
+     C N M N K 1 0 1 0 CALLS_PER_SAMPLE 9
+   ```
+
+   Run the corresponding NT case and repeat with the production builds for
+   `wp=10` and `wp=16`. Use OpenBLAS only as a one-thread `wp=8` ceiling.
+4. Tune the TN register tile first. For `wp=8`, start with a bounded set such
+   as `MR={1,2,4}` and `NR={2,4,8}`, rejecting combinations whose accumulator
+   count causes spills. For `wp=10` with gfortran/x87, start with at most four
+   accumulators, for example 1x2, 1x4, and 2x2; the observed 2x4 regression is
+   the reason for this limit. Treat `wp=16` independently because its lowering
+   may be scalar or library-call based. Inspect generated assembly instead of
+   inferring SIMD width from kind size. Apply the same bounded process to the
+   complex C,N tile; do not assume its current 1x4 shape follows the real TN
+   optimum on another compiler or register file.
+5. Tune NT microtile shape, then `ROW_BLOCK`. Derive the first `MB` estimate
+   from the cache model above using about 50-75% of private L1. Benchmark the
+   nearest practical values and one value on either side; `64, 128, 256, 512`
+   is a reasonable initial geometric sweep, not a required set. Retest if NR
+   changes because NR changes the hot-set estimate.
+6. Keep LAPACK `NB=32` while tuning BLAS so only one layer changes at a time.
+   After retaining BLAS parameters, optionally compare `NB={16,32,48,64}` with
+   complete DGEQRF, DORGQR, and public fresh-factorization timings. `NB` is a
+   LAPACK/QR parameter rather than a DGEMM parameter; changing it changes the
+   DGEMM workload and requires a new call-shape profile and workspace check.
+
+Retain a parameter only when its median improvement is larger than run-to-run
+noise, survives a second pinned run, and improves the complete QR workload.
+Record minimum and spread as well as median. Reject a faster isolated kernel if
+it regresses important smaller shapes, changes benchmark validation, or merely
+moves cost into another phase. After each retained candidate run the focused
+DGEMM tests, `make check`, and a release build at `wp=8`, `wp=10`, and `wp=16`.
+
+Keep machine-specific choices compile-time and precision-specific. A `wp=8`
+tile must not be selected in `wp=10` or `wp=16` through a runtime kind branch.
+If several machines must remain supported, prefer documented build-time
+presets or conservative defaults over hidden runtime CPU detection. For every
+retained preset, record CPU model, compiler/version, flags, cache sizes, tile
+shape, `ROW_BLOCK`, LAPACK `NB`, dominant shapes, isolated medians, and full QR
+medians in this document or a linked tracked results file.
 
 ## Ranked next work
 

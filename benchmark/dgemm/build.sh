@@ -72,6 +72,10 @@ module_flags=("$module_flag" "$module_dir" -I "$module_dir")
   "$object_dir/wp_def.o" "$object_dir/blas.o" \
   -o "$binary_dir/dgemm_benchmark"
 "$compiler" "${optimization_flags[@]}" "${module_flags[@]}" \
+  "$repository_dir/benchmark/dgemm/zgemm_benchmark.f90" \
+  "$object_dir/wp_def.o" "$object_dir/blas.o" \
+  -o "$binary_dir/zgemm_benchmark"
+"$compiler" "${optimization_flags[@]}" "${module_flags[@]}" \
   "$repository_dir/benchmark/dgemm/qr_stage_benchmark.f90" \
   "$object_dir/wp_def.o" "$object_dir/blas.o" "$object_dir/lapack.o" \
   -o "$binary_dir/qr_stage_benchmark"

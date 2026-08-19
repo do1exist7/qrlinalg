@@ -6588,8 +6588,8 @@
       INTRINSIC CONJG,MAX
 *     ..
 *     .. Local Scalars ..
-      COMPLEX(wp) TEMP
-      INTEGER I,INFO,J,L,NCOLA,NROWA,NROWB
+      COMPLEX(wp) A_VALUE,TEMP,TEMP1,TEMP2,TEMP3,TEMP4
+      INTEGER I,INFO,J,J_FULL,J_TAIL,L,NCOLA,NROWA,NROWB
       LOGICAL CONJA,CONJB,NOTA,NOTB
 *     ..
 *     .. Parameters ..
@@ -6703,6 +6703,58 @@
 *
 *           Form  C := alpha*A**H*B + beta*C.
 *
+#if QRLINALG_WP == 8
+*           Four output columns share one conjugated A value.  Independent
+*           accumulators remove the single dot-product dependency chain and
+*           keep C out of the reduction loop.
+*
+              J_FULL = N - MOD(N,4)
+              DO J = 1,J_FULL,4
+                  DO I = 1,M
+                      TEMP1 = ZERO
+                      TEMP2 = ZERO
+                      TEMP3 = ZERO
+                      TEMP4 = ZERO
+                      DO L = 1,K
+                          A_VALUE = CONJG(A(L,I))
+                          TEMP1 = TEMP1 + A_VALUE*B(L,J)
+                          TEMP2 = TEMP2 + A_VALUE*B(L,J+1)
+                          TEMP3 = TEMP3 + A_VALUE*B(L,J+2)
+                          TEMP4 = TEMP4 + A_VALUE*B(L,J+3)
+                      END DO
+                      IF (BETA.EQ.ZERO) THEN
+                          C(I,J) = ALPHA*TEMP1
+                          C(I,J+1) = ALPHA*TEMP2
+                          C(I,J+2) = ALPHA*TEMP3
+                          C(I,J+3) = ALPHA*TEMP4
+                      ELSE IF (BETA.EQ.ONE) THEN
+                          C(I,J) = ALPHA*TEMP1 + C(I,J)
+                          C(I,J+1) = ALPHA*TEMP2 + C(I,J+1)
+                          C(I,J+2) = ALPHA*TEMP3 + C(I,J+2)
+                          C(I,J+3) = ALPHA*TEMP4 + C(I,J+3)
+                      ELSE
+                          C(I,J) = ALPHA*TEMP1 + BETA*C(I,J)
+                          C(I,J+1) = ALPHA*TEMP2 + BETA*C(I,J+1)
+                          C(I,J+2) = ALPHA*TEMP3 + BETA*C(I,J+2)
+                          C(I,J+3) = ALPHA*TEMP4 + BETA*C(I,J+3)
+                      END IF
+                  END DO
+              END DO
+              DO J_TAIL = J_FULL + 1,N
+                  DO I = 1,M
+                      TEMP = ZERO
+                      DO L = 1,K
+                          TEMP = TEMP + CONJG(A(L,I))*B(L,J_TAIL)
+                      END DO
+                      IF (BETA.EQ.ZERO) THEN
+                          C(I,J_TAIL) = ALPHA*TEMP
+                      ELSE
+                          C(I,J_TAIL) = ALPHA*TEMP +
+     +                                  BETA*C(I,J_TAIL)
+                      END IF
+                  END DO
+              END DO
+#else
               DO 120 J = 1,N
                   DO 110 I = 1,M
                       TEMP = ZERO
@@ -6716,6 +6768,7 @@
                       END IF
   110             CONTINUE
   120         CONTINUE
+#endif
           ELSE
 *
 *           Form  C := alpha*A**T*B + beta*C
