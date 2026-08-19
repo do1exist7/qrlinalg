@@ -78,3 +78,33 @@ state copies, warm-up, and validation are therefore excluded from both timing
 and counters. The adjacent `.result.txt` retains the verbose numerical result.
 The plotting and report scripts read that result to normalize aggregate perf
 counters to one numerical operation.
+
+## DGEMM and QR-stage benchmarks
+
+The focused DGEMM build provides an isolated matrix-product driver, separate
+`DGEQRF` and `DORGQR` timings, and an optional wp=8/gfortran link-time call-shape
+profiler.  Each timing driver performs untimed warm-up and reports the median
+of independently timed samples.  Choose the calls per sample so every sample
+lasts at least 0.5 seconds on the machine being measured.
+
+```sh
+./benchmark/dgemm/build.sh --precision 8
+
+# Dominant order-1000 DLARFB shapes measured in the real QR pipeline.
+taskset -c 0 build/benchmarks/wp8/dgemm/bin/dgemm_benchmark \
+  T N 968 32 968 1 1 100 7
+taskset -c 0 build/benchmarks/wp8/dgemm/bin/dgemm_benchmark \
+  N T 968 968 32 -1 1 100 7
+
+# Separate QR stages; copies that restore the input are not timed.
+taskset -c 0 build/benchmarks/wp8/dgemm/bin/qr_stage_benchmark 1000 3 7
+
+# Explicitly enabled diagnostic; aggregated shapes are written to stderr.
+build/benchmarks/wp8/dgemm/bin/qr_stage_profile 1000 1 1 \
+  2>build/benchmarks/wp8/dgemm/call-shapes.csv
+```
+
+The profile wrapper is never linked into the library or normal benchmarks. Its
+C interface is intentionally restricted to the gfortran ABI at `wp=8`; the
+numerical timing drivers themselves support every compiler and precision
+accepted by the main benchmark suite.

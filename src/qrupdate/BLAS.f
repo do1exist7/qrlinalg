@@ -930,13 +930,17 @@
       EXTERNAL XERBLA
 *     ..
 *     .. Local Scalars ..
-      REAL(wp) TEMP
-      INTEGER I,INFO,J,L,NCOLA,NROWA,NROWB
+      REAL(wp) A_FIRST,A_SECOND,B_FIRST,B_SECOND,B_THIRD,B_FOURTH,
+     +         TEMP,TEMP11,TEMP12,TEMP13,TEMP14,TEMP21,TEMP22,
+     +         TEMP23,TEMP24
+      INTEGER I,I_BLOCK,I_LIMIT,INFO,J,J_FULL,J_TAIL,L,NCOLA,NROWA,NROWB
       LOGICAL NOTA,NOTB
 *     ..
 *     .. Parameters ..
       REAL(wp) ONE,ZERO
       PARAMETER (ONE=1.0_wp,ZERO=0.0_wp)
+      INTEGER ROW_BLOCK
+      PARAMETER (ROW_BLOCK=256)
 *     ..
 *
 *     Set  NOTA  and  NOTB  as  true if  A  and  B  respectively are not
@@ -1039,7 +1043,86 @@
 *
 *           Form  C := alpha*A**T*B + beta*C
 *
-              DO 120 J = 1,N
+*           Four output columns share each pair of rows from A at wp=8.  The
+*           eight independent accumulators keep partial sums in registers
+*           while both input panels are traversed contiguously down their
+*           columns.  Extended real kinds use the scalar reference ordering
+*           because their accumulators do not have packed SIMD registers.
+*
+              IF (wp.EQ.8) THEN
+                J_FULL = N - MOD(N,4)
+                DO J = 1,J_FULL,4
+                  DO I = 1,M-1,2
+                      TEMP11 = ZERO
+                      TEMP12 = ZERO
+                      TEMP13 = ZERO
+                      TEMP14 = ZERO
+                      TEMP21 = ZERO
+                      TEMP22 = ZERO
+                      TEMP23 = ZERO
+                      TEMP24 = ZERO
+                      DO L = 1,K
+                          A_FIRST = A(L,I)
+                          A_SECOND = A(L,I+1)
+                          B_FIRST = B(L,J)
+                          B_SECOND = B(L,J+1)
+                          B_THIRD = B(L,J+2)
+                          B_FOURTH = B(L,J+3)
+                          TEMP11 = TEMP11 + A_FIRST*B_FIRST
+                          TEMP12 = TEMP12 + A_FIRST*B_SECOND
+                          TEMP13 = TEMP13 + A_FIRST*B_THIRD
+                          TEMP14 = TEMP14 + A_FIRST*B_FOURTH
+                          TEMP21 = TEMP21 + A_SECOND*B_FIRST
+                          TEMP22 = TEMP22 + A_SECOND*B_SECOND
+                          TEMP23 = TEMP23 + A_SECOND*B_THIRD
+                          TEMP24 = TEMP24 + A_SECOND*B_FOURTH
+                      END DO
+                      IF (BETA.EQ.ZERO) THEN
+                          C(I,J) = ALPHA*TEMP11
+                          C(I,J+1) = ALPHA*TEMP12
+                          C(I,J+2) = ALPHA*TEMP13
+                          C(I,J+3) = ALPHA*TEMP14
+                          C(I+1,J) = ALPHA*TEMP21
+                          C(I+1,J+1) = ALPHA*TEMP22
+                          C(I+1,J+2) = ALPHA*TEMP23
+                          C(I+1,J+3) = ALPHA*TEMP24
+                      ELSE IF (BETA.EQ.ONE) THEN
+                          C(I,J) = ALPHA*TEMP11 + C(I,J)
+                          C(I,J+1) = ALPHA*TEMP12 + C(I,J+1)
+                          C(I,J+2) = ALPHA*TEMP13 + C(I,J+2)
+                          C(I,J+3) = ALPHA*TEMP14 + C(I,J+3)
+                          C(I+1,J) = ALPHA*TEMP21 + C(I+1,J)
+                          C(I+1,J+1) = ALPHA*TEMP22 + C(I+1,J+1)
+                          C(I+1,J+2) = ALPHA*TEMP23 + C(I+1,J+2)
+                          C(I+1,J+3) = ALPHA*TEMP24 + C(I+1,J+3)
+                      ELSE
+                          C(I,J) = ALPHA*TEMP11 + BETA*C(I,J)
+                          C(I,J+1) = ALPHA*TEMP12 + BETA*C(I,J+1)
+                          C(I,J+2) = ALPHA*TEMP13 + BETA*C(I,J+2)
+                          C(I,J+3) = ALPHA*TEMP14 + BETA*C(I,J+3)
+                          C(I+1,J) = ALPHA*TEMP21 + BETA*C(I+1,J)
+                          C(I+1,J+1) = ALPHA*TEMP22 + BETA*C(I+1,J+1)
+                          C(I+1,J+2) = ALPHA*TEMP23 + BETA*C(I+1,J+2)
+                          C(I+1,J+3) = ALPHA*TEMP24 + BETA*C(I+1,J+3)
+                      END IF
+                  END DO
+                  IF (MOD(M,2).NE.0) THEN
+                      I = M
+                      DO J_TAIL = J,J+3
+                          TEMP = ZERO
+                          DO L = 1,K
+                              TEMP = TEMP + A(L,I)*B(L,J_TAIL)
+                          END DO
+                          IF (BETA.EQ.ZERO) THEN
+                              C(I,J_TAIL) = ALPHA*TEMP
+                          ELSE
+                              C(I,J_TAIL) = ALPHA*TEMP +
+     +                                      BETA*C(I,J_TAIL)
+                          END IF
+                      END DO
+                  END IF
+                END DO
+                DO 120 J = J_FULL + 1,N
                   DO 110 I = 1,M
                       TEMP = ZERO
                       DO 100 L = 1,K
@@ -1052,29 +1135,70 @@
                       END IF
   110             CONTINUE
   120         CONTINUE
+              ELSE
+                  DO J = 1,N
+                      DO I = 1,M
+                          TEMP = ZERO
+                          DO L = 1,K
+                              TEMP = TEMP + A(L,I)*B(L,J)
+                          END DO
+                          IF (BETA.EQ.ZERO) THEN
+                              C(I,J) = ALPHA*TEMP
+                          ELSE
+                              C(I,J) = ALPHA*TEMP + BETA*C(I,J)
+                          END IF
+                      END DO
+                  END DO
+              END IF
           END IF
       ELSE
           IF (NOTA) THEN
 *
 *           Form  C := alpha*A*B**T + beta*C
 *
-              DO 170 J = 1,N
-                  IF (BETA.EQ.ZERO) THEN
-                      DO 130 I = 1,M
+*           Scale C once before accumulating.  Four adjacent output columns
+*           reuse each contiguous vector from A.  Row tiles keep those four
+*           columns of C and one column of A resident in L1 cache for the
+*           complete K panel; at wp=8 a full tile occupies about 10 KiB.
+*
+              IF (BETA.EQ.ZERO) THEN
+                  DO 130 J = 1,N
+                      DO I = 1,M
                           C(I,J) = ZERO
-  130                 CONTINUE
-                  ELSE IF (BETA.NE.ONE) THEN
-                      DO 140 I = 1,M
+                      END DO
+  130             CONTINUE
+              ELSE IF (BETA.NE.ONE) THEN
+                  DO 140 J = 1,N
+                      DO I = 1,M
                           C(I,J) = BETA*C(I,J)
-  140                 CONTINUE
-                  END IF
+                      END DO
+  140             CONTINUE
+              END IF
+              J_FULL = N - MOD(N,4)
+              DO J = 1,J_FULL,4
+                  DO I_BLOCK = 1,M,ROW_BLOCK
+                      I_LIMIT = MIN(M,I_BLOCK+ROW_BLOCK-1)
+                      DO L = 1,K
+                          B_FIRST = ALPHA*B(J,L)
+                          B_SECOND = ALPHA*B(J+1,L)
+                          B_THIRD = ALPHA*B(J+2,L)
+                          B_FOURTH = ALPHA*B(J+3,L)
+                          DO I = I_BLOCK,I_LIMIT
+                              A_FIRST = A(I,L)
+                              C(I,J) = C(I,J) + A_FIRST*B_FIRST
+                              C(I,J+1) = C(I,J+1) + A_FIRST*B_SECOND
+                              C(I,J+2) = C(I,J+2) + A_FIRST*B_THIRD
+                              C(I,J+3) = C(I,J+3) + A_FIRST*B_FOURTH
+                          END DO
+                      END DO
+                  END DO
+              END DO
+              DO 170 J = J_FULL + 1,N
                   DO 160 L = 1,K
-                      IF (B(J,L).NE.ZERO) THEN
-                          TEMP = ALPHA*B(J,L)
-                          DO 150 I = 1,M
-                              C(I,J) = C(I,J) + TEMP*A(I,L)
-  150                     CONTINUE
-                      END IF
+                      TEMP = ALPHA*B(J,L)
+                      DO 150 I = 1,M
+                          C(I,J) = C(I,J) + TEMP*A(I,L)
+  150                 CONTINUE
   160             CONTINUE
   170         CONTINUE
           ELSE
