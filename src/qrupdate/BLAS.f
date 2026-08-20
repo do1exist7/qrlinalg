@@ -946,6 +946,10 @@
       PARAMETER (ONE=1.0_wp,ZERO=0.0_wp)
       INTEGER ROW_BLOCK
       PARAMETER (ROW_BLOCK=256)
+*     OpenMP builds distribute only sufficiently large independent output
+*     columns or column tiles.  Serial builds treat the directives as comments.
+      INTEGER OMP_MIN_WORK
+      PARAMETER (OMP_MIN_WORK=2000000)
 *     ..
 *
 *     Set  NOTA  and  NOTB  as  true if  A  and  B  respectively are not
@@ -1057,6 +1061,12 @@
 *           both input panels are traversed contiguously down their columns.
 *
                 J_FULL = N - MOD(N,4)
+!$OMP PARALLEL DO DEFAULT(SHARED) SCHEDULE(STATIC)
+!$OMP& IF(J_FULL.GE.8 .AND.
+!$OMP& M.GE.MAX(1,OMP_MIN_WORK/MAX(1,N)/MAX(1,K)))
+!$OMP& PRIVATE(I,L,J_TAIL,A_FIRST,A_SECOND,B_FIRST,B_SECOND,
+!$OMP& B_THIRD,B_FOURTH,TEMP,TEMP11,TEMP12,TEMP13,TEMP14,
+!$OMP& TEMP21,TEMP22,TEMP23,TEMP24)
                 DO J = 1,J_FULL,4
                   DO I = 1,M-1,2
                       TEMP11 = ZERO
@@ -1146,6 +1156,10 @@
 *           in the extended-real x87 register stack.
 *
                   J_FULL = N - MOD(N,4)
+!$OMP PARALLEL DO DEFAULT(SHARED) SCHEDULE(STATIC)
+!$OMP& IF(J_FULL.GE.8 .AND.
+!$OMP& M.GE.MAX(1,OMP_MIN_WORK/MAX(1,N)/MAX(1,K)))
+!$OMP& PRIVATE(I,L,A_FIRST,TEMP,TEMP11,TEMP12,TEMP13,TEMP14)
                   DO J = 1,J_FULL,4
                       DO I = 1,M
                           TEMP11 = ZERO
@@ -1193,6 +1207,10 @@
 #else
 *           Quadruple precision retains the scalar reference ordering.
 *
+!$OMP PARALLEL DO DEFAULT(SHARED) SCHEDULE(STATIC)
+!$OMP& IF(N.GE.8 .AND.
+!$OMP& M.GE.MAX(1,OMP_MIN_WORK/MAX(1,N)/MAX(1,K)))
+!$OMP& PRIVATE(I,L,TEMP)
                   DO J = 1,N
                       DO I = 1,M
                           TEMP = ZERO
@@ -1221,6 +1239,10 @@
 *           the complete K reduction.
 *
                   I_LIMIT = M - MOD(M,4)
+!$OMP PARALLEL DO DEFAULT(SHARED) SCHEDULE(STATIC)
+!$OMP& IF(N.GE.8 .AND.
+!$OMP& M.GE.MAX(1,OMP_MIN_WORK/MAX(1,N)/MAX(1,K)))
+!$OMP& PRIVATE(I,L,B_FIRST,TEMP,TEMP11,TEMP12,TEMP13,TEMP14)
                   DO J = 1,N
                       DO I = 1,I_LIMIT,4
                           IF (BETA.EQ.ZERO) THEN
@@ -1284,6 +1306,11 @@
   140             CONTINUE
               END IF
                   J_FULL = N - MOD(N,4)
+!$OMP PARALLEL DO DEFAULT(SHARED) SCHEDULE(STATIC)
+!$OMP& IF(J_FULL.GE.8 .AND.
+!$OMP& M.GE.MAX(1,OMP_MIN_WORK/MAX(1,N)/MAX(1,K)))
+!$OMP& PRIVATE(I,I_BLOCK,I_LIMIT,L,A_FIRST,B_FIRST,B_SECOND,
+!$OMP& B_THIRD,B_FOURTH)
                   DO J = 1,J_FULL,4
                       DO I_BLOCK = 1,M,ROW_BLOCK
                           I_LIMIT = MIN(M,I_BLOCK+ROW_BLOCK-1)
@@ -6597,6 +6624,10 @@
       PARAMETER (ONE= (1.0_wp,0.0_wp))
       COMPLEX(wp) ZERO
       PARAMETER (ZERO= (0.0_wp,0.0_wp))
+*     The work threshold matches DGEMM so real and complex calls use the same
+*     coarse scheduling policy without runtime hardware detection.
+      INTEGER OMP_MIN_WORK
+      PARAMETER (OMP_MIN_WORK=2000000)
 *     ..
 *
 *     Set  NOTA  and  NOTB  as  true if  A  and  B  respectively are not
@@ -6709,6 +6740,10 @@
 *           keep C out of the reduction loop.
 *
               J_FULL = N - MOD(N,4)
+!$OMP PARALLEL DO DEFAULT(SHARED) SCHEDULE(STATIC)
+!$OMP& IF(J_FULL.GE.8 .AND.
+!$OMP& M.GE.MAX(1,OMP_MIN_WORK/MAX(1,N)/MAX(1,K)))
+!$OMP& PRIVATE(I,L,A_VALUE,TEMP1,TEMP2,TEMP3,TEMP4)
               DO J = 1,J_FULL,4
                   DO I = 1,M
                       TEMP1 = ZERO
@@ -6755,6 +6790,10 @@
                   END DO
               END DO
 #else
+!$OMP PARALLEL DO DEFAULT(SHARED) SCHEDULE(STATIC)
+!$OMP& IF(N.GE.8 .AND.
+!$OMP& M.GE.MAX(1,OMP_MIN_WORK/MAX(1,N)/MAX(1,K)))
+!$OMP& PRIVATE(I,L,TEMP)
               DO 120 J = 1,N
                   DO 110 I = 1,M
                       TEMP = ZERO
@@ -6792,6 +6831,10 @@
 *
 *           Form  C := alpha*A*B**H + beta*C.
 *
+!$OMP PARALLEL DO DEFAULT(SHARED) SCHEDULE(STATIC)
+!$OMP& IF(N.GE.8 .AND.
+!$OMP& M.GE.MAX(1,OMP_MIN_WORK/MAX(1,N)/MAX(1,K)))
+!$OMP& PRIVATE(I,L,TEMP)
               DO 200 J = 1,N
                   IF (BETA.EQ.ZERO) THEN
                       DO 160 I = 1,M

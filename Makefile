@@ -1,14 +1,20 @@
 COMPILER ?= gfortran
 PREC ?= 8
 CONFIG ?= release
+OPENMP ?= 0
 
 SRC_DIR := src
 QRUPDATE_DIR := $(SRC_DIR)/qrupdate
-BUILD_DIR := build/$(CONFIG)-wp$(PREC)
+OPENMP_SUFFIX := $(if $(filter 1,$(OPENMP)),-omp)
+BUILD_DIR ?= build/$(CONFIG)-wp$(PREC)$(OPENMP_SUFFIX)
 LIB := $(BUILD_DIR)/libqrlinalg.a
 
 ifneq ($(PREC),$(filter $(PREC),8 10 16))
   $(error PREC must be 8, 10, or 16)
+endif
+
+ifneq ($(OPENMP),$(filter $(OPENMP),0 1))
+  $(error OPENMP must be 0 or 1)
 endif
 
 ifeq ($(COMPILER),gfortran)
@@ -21,6 +27,7 @@ ifeq ($(COMPILER),gfortran)
   RELEASE_FLAGS := -O3 -march=native
   DEBUG_FLAGS := -O0 -g -fcheck=all -fbacktrace
   OWN_WARNING_FLAGS := -Wall -Wextra -Wno-unused-dummy-argument
+  OPENMP_FLAG := -fopenmp
 else ifeq ($(COMPILER),ifort)
   FC := ifort
   MODULE_FLAGS := -I$(BUILD_DIR) -module $(BUILD_DIR)
@@ -31,6 +38,7 @@ else ifeq ($(COMPILER),ifort)
   RELEASE_FLAGS := -O3 -ip -fp-model precise
   DEBUG_FLAGS := -O0 -g -check all -traceback
   OWN_WARNING_FLAGS := -warn all
+  OPENMP_FLAG := -qopenmp
 else ifeq ($(COMPILER),ifx)
   FC := ifx
   MODULE_FLAGS := -I$(BUILD_DIR) -module $(BUILD_DIR)
@@ -41,6 +49,7 @@ else ifeq ($(COMPILER),ifx)
   RELEASE_FLAGS := -O3 -fp-model precise
   DEBUG_FLAGS := -O0 -g -check all -traceback
   OWN_WARNING_FLAGS := -warn all
+  OPENMP_FLAG := -qopenmp
 else ifeq ($(COMPILER),nvfortran)
   FC := nvfortran
   MODULE_FLAGS := -I$(BUILD_DIR) -module $(BUILD_DIR)
@@ -51,8 +60,13 @@ else ifeq ($(COMPILER),nvfortran)
   RELEASE_FLAGS := -O3 -tp=native
   DEBUG_FLAGS := -O0 -g -Mbounds -traceback
   OWN_WARNING_FLAGS := -Minform=warn
+  OPENMP_FLAG := -mp
 else
   $(error unsupported COMPILER=$(COMPILER))
+endif
+
+ifeq ($(OPENMP),1)
+  PARALLEL_FLAGS := $(OPENMP_FLAG)
 endif
 
 ifeq ($(CONFIG),release)
@@ -63,7 +77,7 @@ else
   $(error CONFIG must be release or debug)
 endif
 
-FFLAGS := $(MODULE_FLAGS) $(CONFIG_FLAGS)
+FFLAGS := $(MODULE_FLAGS) $(CONFIG_FLAGS) $(PARALLEL_FLAGS)
 ARFLAGS = rcs
 QRLINALG_TEST_FLAGS ?=
 TEST_NAMES := test_initialization test_factorization test_dgemm test_zgemm \
@@ -76,7 +90,7 @@ TEST_SUPPORT_OBJECT := $(BUILD_DIR)/test_support.o
 PYTHON ?= python3
 DATA_DIR ?= data
 DIFF_MANIFEST ?= $(DATA_DIR)/cases.csv
-DIFF_DIR := build/differential-$(CONFIG)-wp$(PREC)
+DIFF_DIR := build/differential-$(CONFIG)-wp$(PREC)$(OPENMP_SUFFIX)
 DIFF_NEW_DIR := $(DIFF_DIR)/new
 DIFF_ORIG_DIR := $(DIFF_DIR)/orig
 DIFF_NEW_EXE := $(DIFF_NEW_DIR)/qrlinalg_driver
@@ -120,7 +134,8 @@ build: $(LIB)
 check: test
 
 check-one:
-	$(MAKE) CONFIG=debug PREC=$(PREC) BUILD_DIR=build/test-wp$(PREC) \
+	$(MAKE) CONFIG=debug PREC=$(PREC) \
+		BUILD_DIR=build/test-wp$(PREC)$(OPENMP_SUFFIX) \
 		QRLINALG_TEST_FLAGS=-DQRLINALG_TESTING test-one
 
 test:

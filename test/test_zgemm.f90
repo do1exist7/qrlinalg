@@ -57,6 +57,11 @@ program test_zgemm
   call run_case('N', 'N', 9, 7, 11, scalars(4), scalars(2), 3, failures)
   call run_case('T', 'C', 6, 9, 8, scalars(3), scalars(4), 4, failures)
 
+  ! Exercise the QR-dominant CN and NC calls above the OpenMP threshold.
+  ! Each output column or four-column tile is owned by exactly one thread.
+  call run_case('C', 'N', 256, 32, 256, scalars(2), scalars(2), 3, failures)
+  call run_case('N', 'C', 256, 256, 32, scalars(3), scalars(2), 3, failures)
+
   call run_beta_zero_nan_case('C', 'N', failures)
   call run_beta_zero_nan_case('N', 'C', failures)
   call run_beta_zero_nan_case('N', 'N', failures)

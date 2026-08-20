@@ -1,5 +1,10 @@
 # Bundled DGEMM optimization: HPC handoff
 
+For a consolidated description of the retained DGEMM, ZGEMM, and OpenMP
+strategies, see the [GEMM optimization report](GEMM_OPTIMIZATION_REPORT.md).
+This handoff focuses on measured history and the protocol for further
+machine-specific work.
+
 ## Saved baseline
 
 Work from branch `optimize/qr-hotpaths`. Commit `dde28f1` (`Optimize bundled
@@ -280,10 +285,14 @@ medians in this document or a linked tracked results file.
    TT, or another kernel if its measured contribution becomes material. This
    measurement is cheap and prevents optimizing a former bottleneck.
 
-4. **Consider OpenMP only after the serial kernels stabilize.** Parallelize
-   independent C tiles above a workload threshold, preserve a non-OpenMP build,
-   and check for caller oversubscription. This is a build/policy change and
-   should not be mixed with the next serial experiment.
+4. **The first OpenMP experiment is complete.** The retained opt-in build
+   distributes independent C columns or four-column tiles only in the
+   QR-dominant TN/NT and CN/NC GEMM paths. A two-million-multiply threshold
+   keeps small calls serial. On the four-core laptop, order-1000 wp=8 fresh QR
+   improved by 1.58x real and 2.16x complex relative to the optimized serial
+   build. TRMM remained about 2%, so it was not threaded. See
+   `benchmark/report.md` for all-mode comparisons, scaling, counters, and
+   limitations. Re-measure the threshold and affinity after moving machines.
 
 ## Correctness and retention gate
 

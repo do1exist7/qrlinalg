@@ -20,11 +20,15 @@ make                         # release, wp=8, gfortran
 make PREC=10 CONFIG=debug
 make PREC=16 COMPILER=ifx
 make check                   # debug builds at wp=8, 10, and 16
+make release OPENMP=1        # opt-in threaded Level-3 QR updates
 ```
 
-Supported compilers are `gfortran`, `ifort`, `ifx`, and `nvfortran`. Artifacts
-are written to `build/<configuration>-wp<kind>/`. The build is serial and links
-the bundled generic-precision BLAS/LAPACK; it never uses MPI or a conventional
+Supported compilers are `gfortran`, `ifort`, `ifx`, and `nvfortran`. Serial
+artifacts are written to `build/<configuration>-wp<kind>/`; `OPENMP=1` uses a
+separate `-omp` build directory and activates coarse threading in sufficiently
+large GEMM calls made by blocked fresh QR. The default remains serial. OpenMP
+does not parallelize qrupdate operations and does not make one mutable state
+safe for simultaneous calls. The library never uses MPI or a conventional
 fixed-double system BLAS/LAPACK.
 
 An fpm 0.13-or-newer build defaults to `wp=8`:

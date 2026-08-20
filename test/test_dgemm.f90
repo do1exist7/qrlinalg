@@ -60,6 +60,12 @@ program test_dgemm
   call run_case('N', 'N', 9, 7, 11, 0.375_wp, 1.0_wp, 3, failures)
   call run_case('C', 'T', 6, 9, 8, -1.0_wp, 0.375_wp, 4, failures)
 
+  ! These QR-shaped cases exceed the OpenMP work threshold.  In an OpenMP
+  ! build they verify the threaded TN and NT paths with padded storage while
+  ! the same source remains a serial regression test in the default build.
+  call run_case('T', 'N', 256, 32, 256, 1.0_wp, 1.0_wp, 3, failures)
+  call run_case('N', 'T', 256, 256, 32, -1.0_wp, 1.0_wp, 3, failures)
+
   ! A quiet NaN detects an accidental read of C in the beta=0 paths: any
   ! arithmetic involving the prior value would contaminate the finite result.
   call run_beta_zero_nan_case('T', 'N', failures)

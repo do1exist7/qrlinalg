@@ -4,15 +4,17 @@ set -euo pipefail
 repository_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 precision=8
 compiler=gfortran
+openmp=0
 
 usage() {
-  echo "Usage: $0 [--precision 8|10|16] [--compiler NAME]"
+  echo "Usage: $0 [--precision 8|10|16] [--compiler NAME] [--openmp]"
 }
 
 while (($#)); do
   case "$1" in
     --precision) precision=$2; shift 2 ;;
     --compiler) compiler=$2; shift 2 ;;
+    --openmp) openmp=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -27,29 +29,39 @@ case "$compiler" in
     fixed_flags=(-ffixed-line-length-none)
     preprocess_flags=(-cpp "-DQRLINALG_WP=$precision")
     module_flag=-J
+    openmp_flag=-fopenmp
     ;;
   ifort)
     optimization_flags=(-O3 -ip -fp-model precise)
     fixed_flags=(-extend-source)
     preprocess_flags=(-fpp "-DQRLINALG_WP=$precision")
     module_flag=-module
+    openmp_flag=-qopenmp
     ;;
   ifx)
     optimization_flags=(-O3 -fp-model precise)
     fixed_flags=(-extend-source)
     preprocess_flags=(-fpp "-DQRLINALG_WP=$precision")
     module_flag=-module
+    openmp_flag=-qopenmp
     ;;
   nvfortran)
     optimization_flags=(-O3 -tp=native)
     fixed_flags=(-Mextend)
     preprocess_flags=(-Mpreprocess "-DQRLINALG_WP=$precision")
     module_flag=-module
+    openmp_flag=-mp
     ;;
   *) echo "Unsupported compiler: $compiler" >&2; exit 2 ;;
 esac
 
-output_dir="$repository_dir/build/benchmarks/wp${precision}/dgemm"
+variant_suffix=''
+if ((openmp)); then
+  optimization_flags+=("$openmp_flag")
+  variant_suffix=-openmp
+fi
+
+output_dir="$repository_dir/build/benchmarks/wp${precision}/dgemm$variant_suffix"
 module_dir="$output_dir/mod"
 object_dir="$output_dir/obj"
 binary_dir="$output_dir/bin"

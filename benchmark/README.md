@@ -18,11 +18,19 @@ destructive LDLT inputs, warm-up, and residual validation are not timed.
 ./benchmark/run_ldlt.sh --sizes 100,200,500,1000 --repetitions 5
 ./benchmark/run_qr.sh --kind complex --operation replacement --repetitions 100
 ./benchmark/run_ldlt.sh --kind real --operation append_and_solve
+
+# Build/run the opt-in OpenMP QR variant in a separate qr-openmp directory.
+OMP_NUM_THREADS=4 OMP_PROC_BIND=close OMP_PLACES=cores \
+  ./benchmark/run_qr.sh --openmp --operation factorization \
+  --sizes 500,1000 --repetitions 5
 ```
 
 The compiler defaults to `gfortran`; `--compiler` also accepts `ifort`, `ifx`,
 and `nvfortran`. Use `--repetitions auto` for the size- and precision-dependent
 scaling from the original driver, and `--no-build` to reuse executables.
+`--openmp` is available for QR builds and runs only; it keeps serial and
+threaded benchmark objects separate. Set `OMP_NUM_THREADS` explicitly and use
+`OMP_PROC_BIND`/`OMP_PLACES` appropriate to the measured machine.
 
 QR operations are `factorization`, `solve`, `full_solve`, `replacement`,
 `append`, and `deletion`. LDLT operations are `factorization`, `solve`,
@@ -60,12 +68,22 @@ full LDLT factorization as a rebuild baseline, but must label it explicitly.
 The script creates independent timing plots and prints all eigenvalues,
 iteration counts, residuals, and statuses. It requires Matplotlib.
 
+The tracked [`report.md`](report.md) records the 2026-08-20 comparison of the
+optimized serial and OpenMP QR builds, QR with the pre-optimization bundled
+BLAS/LAPACK, and the original Claude LDLT/LDLH implementation across every
+operation supported by the benchmark drivers.
+
 ## Perf
 
 ```sh
 ./benchmark/run_perf.sh \
   --implementation qr --operation replacement --kind real --size 1000 \
   --kernel-repetitions 100 --perf-repetitions 5
+
+OMP_NUM_THREADS=4 OMP_PROC_BIND=close OMP_PLACES=cores \
+  ./benchmark/run_perf.sh --openmp --implementation qr \
+  --operation factorization --kind real --size 1000 \
+  --kernel-repetitions 5 --perf-repetitions 3
 
 ./benchmark/plot_perf.py \
   build/benchmarks/wp8/perf/qr/replacement/real_1000.csv \
@@ -89,6 +107,7 @@ lasts at least 0.5 seconds on the machine being measured.
 
 ```sh
 ./benchmark/dgemm/build.sh --precision 8
+./benchmark/dgemm/build.sh --precision 8 --openmp
 
 # Dominant order-1000 DLARFB shapes measured in the real QR pipeline.
 taskset -c 0 build/benchmarks/wp8/dgemm/bin/dgemm_benchmark \

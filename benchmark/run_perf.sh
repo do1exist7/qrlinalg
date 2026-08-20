@@ -12,6 +12,7 @@ kernel_repetitions=100
 perf_repetitions=5
 output=''
 rebuild=1
+openmp=0
 
 usage() {
   cat <<'EOF'
@@ -23,6 +24,7 @@ Usage: benchmark/run_perf.sh --implementation qr|ldlt --operation NAME [options]
   --kernel-repetitions N
   --perf-repetitions N
   --output FILE
+  --openmp
   --no-build
 EOF
 }
@@ -38,6 +40,7 @@ while (($#)); do
     --kernel-repetitions) kernel_repetitions=$2; shift 2 ;;
     --perf-repetitions) perf_repetitions=$2; shift 2 ;;
     --output) output=$2; shift 2 ;;
+    --openmp) openmp=1; shift ;;
     --no-build) rebuild=0; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -51,20 +54,28 @@ done
 [[ "$kernel_repetitions" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid kernel repetitions" >&2; exit 2; }
 [[ "$perf_repetitions" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid perf repetitions" >&2; exit 2; }
 command -v perf >/dev/null || { echo "perf is not installed" >&2; exit 1; }
-
-if ((rebuild)); then
-  "$repository_dir/benchmark/build.sh" "$implementation" \
-    --precision "$precision" --compiler "$compiler"
+if ((openmp)) && [[ "$implementation" != qr ]]; then
+  echo "--openmp is supported only for QR" >&2
+  exit 2
 fi
 
-executable="$repository_dir/build/benchmarks/wp${precision}/${implementation}/bin/${implementation}_${operation}"
+if ((rebuild)); then
+  build_arguments=("$implementation" --precision "$precision" \
+    --compiler "$compiler")
+  ((openmp)) && build_arguments+=(--openmp)
+  "$repository_dir/benchmark/build.sh" "${build_arguments[@]}"
+fi
+
+implementation_dir=$implementation
+((openmp)) && implementation_dir=$implementation-openmp
+executable="$repository_dir/build/benchmarks/wp${precision}/${implementation_dir}/bin/${implementation}_${operation}"
 h_file="$repository_dir/data/data_${size}/H_${kind}.dat"
 s_file="$repository_dir/data/data_${size}/S_${kind}.dat"
 [[ -x "$executable" ]] || { echo "Missing executable: $executable" >&2; exit 1; }
 [[ -f "$h_file" && -f "$s_file" ]] || { echo "Missing dataset in data/data_${size}" >&2; exit 1; }
 
 if [[ -z "$output" ]]; then
-  output="$repository_dir/build/benchmarks/wp${precision}/perf/${implementation}/${operation}/${kind}_${size}.csv"
+  output="$repository_dir/build/benchmarks/wp${precision}/perf/${implementation_dir}/${operation}/${kind}_${size}.csv"
 fi
 mkdir -p "$(dirname "$output")"
 result_output="${output%.csv}.result.txt"

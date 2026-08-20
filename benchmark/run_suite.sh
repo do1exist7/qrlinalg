@@ -12,6 +12,7 @@ operations=all
 repetitions=5
 output=''
 rebuild=1
+openmp=0
 
 usage() {
   cat <<EOF
@@ -23,6 +24,7 @@ Usage: benchmark/run_${implementation}.sh [options]
   --operation NAME|all
   --repetitions INTEGER|auto
   --output FILE
+  --openmp                    use the opt-in OpenMP QR build
   --no-build
 EOF
 }
@@ -39,6 +41,7 @@ while (($#)); do
     --operation) operations=$2; shift 2 ;;
     --repetitions) repetitions=$2; shift 2 ;;
     --output) output=$2; shift 2 ;;
+    --openmp) openmp=1; shift ;;
     --no-build) rebuild=0; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -56,6 +59,10 @@ if [[ "$implementation" == qr ]]; then
 else
   available=(factorization solve full_solve append_factorization append_and_solve)
 fi
+if ((openmp)) && [[ "$implementation" != qr ]]; then
+  echo "--openmp is supported only for QR" >&2
+  exit 2
+fi
 if [[ "$operations" == all ]]; then
   selected_operations=("${available[@]}")
 else
@@ -70,12 +77,17 @@ else
 fi
 
 if ((rebuild)); then
-  "$repository_dir/benchmark/build.sh" "$implementation" \
-    --precision "$precision" --compiler "$compiler"
+  build_arguments=("$implementation" --precision "$precision" \
+    --compiler "$compiler")
+  ((openmp)) && build_arguments+=(--openmp)
+  "$repository_dir/benchmark/build.sh" "${build_arguments[@]}"
 fi
 
+implementation_dir=$implementation
+((openmp)) && implementation_dir=$implementation-openmp
+
 if [[ -z "$output" ]]; then
-  output="$repository_dir/build/benchmarks/wp${precision}/results/${implementation}.csv"
+    output="$repository_dir/build/benchmarks/wp${precision}/results/${implementation_dir}.csv"
 fi
 mkdir -p "$(dirname "$output")"
 header='record,implementation,operation,kind,precision,n,shift,repetitions,total_seconds,seconds_per_operation,status,iterations,eigenvalue,relative_accuracy,residual'
@@ -107,7 +119,7 @@ for n in "${selected_sizes[@]}"; do
       if [[ "$run_repetitions" == auto ]]; then
         run_repetitions=$(automatic_repetitions "$operation" "$n")
       fi
-      executable="$repository_dir/build/benchmarks/wp${precision}/${implementation}/bin/${implementation}_${operation}"
+      executable="$repository_dir/build/benchmarks/wp${precision}/${implementation_dir}/bin/${implementation}_${operation}"
       [[ -x "$executable" ]] || { echo "Missing executable: $executable" >&2; exit 1; }
       echo
       echo "[$implementation] $operation, kind=$kind, n=$n, repetitions=$run_repetitions"

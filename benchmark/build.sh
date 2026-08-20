@@ -7,15 +7,17 @@ shift || true
 precision=8
 compiler=gfortran
 clean=0
+openmp=0
 
 usage() {
-  echo "Usage: $0 [qr|ldlt|all] [--precision 8|10|16] [--compiler NAME] [--clean]"
+  echo "Usage: $0 [qr|ldlt|all] [--precision 8|10|16] [--compiler NAME] [--openmp] [--clean]"
 }
 
 while (($#)); do
   case "$1" in
     --precision) precision=$2; shift 2 ;;
     --compiler) compiler=$2; shift 2 ;;
+    --openmp) openmp=1; shift ;;
     --clean) clean=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -25,6 +27,10 @@ done
 case "$implementation" in qr|ldlt|all) ;; *) usage >&2; exit 2 ;; esac
 case "$precision" in 8|10|16) ;; *) echo "Precision must be 8, 10, or 16" >&2; exit 2 ;; esac
 command -v "$compiler" >/dev/null || { echo "Compiler not found: $compiler" >&2; exit 1; }
+if ((openmp)) && [[ "$implementation" != qr ]]; then
+  echo "--openmp is supported only for the QR benchmark build" >&2
+  exit 2
+fi
 
 build_root="$repository_dir/build/benchmarks/wp${precision}"
 if ((clean)); then
@@ -41,6 +47,7 @@ case "$compiler" in
     fixed_flags=(-ffixed-line-length-none)
     preprocess_flags=(-cpp "-DQRLINALG_WP=$precision")
     module_output_flag=J
+    openmp_flag=-fopenmp
     ;;
   ifort)
     opt_flags=(-O3 -ip -fp-model precise)
@@ -48,6 +55,7 @@ case "$compiler" in
     fixed_flags=(-extend-source)
     preprocess_flags=(-fpp "-DQRLINALG_WP=$precision")
     module_output_flag=module
+    openmp_flag=-qopenmp
     ;;
   ifx)
     opt_flags=(-O3 -fp-model precise)
@@ -55,6 +63,7 @@ case "$compiler" in
     fixed_flags=(-extend-source)
     preprocess_flags=(-fpp "-DQRLINALG_WP=$precision")
     module_output_flag=module
+    openmp_flag=-qopenmp
     ;;
   nvfortran)
     opt_flags=(-O3 -tp=native)
@@ -62,12 +71,20 @@ case "$compiler" in
     fixed_flags=(-Mextend)
     preprocess_flags=(-Mpreprocess "-DQRLINALG_WP=$precision")
     module_output_flag=module
+    openmp_flag=-mp
     ;;
   *) echo "Unsupported compiler: $compiler" >&2; exit 2 ;;
 esac
 
+variant_suffix=''
+if ((openmp)); then
+  opt_flags+=("$openmp_flag")
+  variant_suffix=-openmp
+fi
+
 compile_qr() {
-  local out="$build_root/qr" mod="$build_root/qr/mod" obj="$build_root/qr/obj"
+  local out="$build_root/qr$variant_suffix"
+  local mod="$out/mod" obj="$out/obj"
   mkdir -p "$out/bin" "$mod" "$obj"
   local mf=("-$module_output_flag" "$mod" -I "$mod")
   "$compiler" "${opt_flags[@]}" "${mf[@]}" "${preprocess_flags[@]}" -c \
