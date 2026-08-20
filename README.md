@@ -36,6 +36,23 @@ fpm build
 For `wp=10` or `wp=16`, change the single `QRLINALG_WP` macro in `fpm.toml`
 before building. This is a compile-time choice; one library contains one `wp`.
 
+## Complete example
+
+Build and run the documented allocation-to-deallocation lifecycle example:
+
+```sh
+make example PREC=8
+./build/release-wp8/qrlinalg_example
+```
+
+The example covers fresh factorization, inverse iteration, replacement,
+append, deletion, explicit state deallocation, reallocation with a different
+capacity, and fresh factorization at a new shift. A shift change by itself only
+requires `factorize_fresh(H, S, new_shift, info)`; the existing allocation can
+be reused. See
+[`example/README.md`](example/README.md) for the ownership and automatic
+cleanup rules.
+
 ## Benchmarks
 
 Build and run the independent QR or pristine-LDLT timing suites directly:
@@ -230,6 +247,12 @@ The complex state also owns real workspace required by complex rotations.
 Initialization queries both LAPACK factorization stages at the maximum basis
 size and allocates the larger recommended workspace. All storage is therefore
 allocated before factorization, update, or solve loops begin.
+
+Calling `initialize` again on an existing state first releases its old factors
+and workspaces, then allocates an empty state for the new capacity. If the state
+object is allocatable, intrinsic `deallocate(state)` releases all of its private
+allocatable components automatically. A non-allocatable local state is cleaned
+up the same way when its scope ends; no separate cleanup routine is required.
 
 ECGPACK remains the owner of `H` and `S`. A QR state neither copies nor retains
 pointers to them, and it never permanently stores `M = H - shift*S`. A fresh

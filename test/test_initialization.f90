@@ -13,6 +13,7 @@ program test_initialization
   call test_invalid_initialization(failures)
   call test_real_initialization(failures)
   call test_complex_initialization(failures)
+  call test_state_lifetimes(failures)
   call finish_suite('qrlinalg initialization', failures)
 
 contains
@@ -117,5 +118,77 @@ contains
                state%updates_since_fresh == 0, &
                'complex initialize clears update counters', failures)
   end subroutine test_complex_initialization
+
+  ! Verify the explicit allocate-update-deallocate-allocate lifecycle used by
+  ! long-running callers that want deterministic release of state storage.
+  ! Intrinsic deallocation of the derived object recursively releases all
+  ! private allocatable components, after which a new object may use a new
+  ! capacity and represent factors at a different shift.
+  subroutine test_state_lifetimes(failures)
+    integer, intent(inout) :: failures
+    type(qr_real_state), allocatable :: real_state
+    type(qr_complex_state), allocatable :: complex_state
+    real(wp) :: delta_h(2), delta_s(2), h(2,2), s(2,2)
+    complex(wp) :: complex_delta_h(2), complex_delta_s(2)
+    complex(wp) :: complex_h(2,2), complex_s(2,2)
+    integer :: info
+
+    h = 0.0_wp
+    h(1,1) = 1.0_wp
+    h(2,1) = 0.1_wp
+    h(2,2) = 3.0_wp
+    s = 0.0_wp
+    s(1,1) = 1.0_wp
+    s(2,2) = 1.0_wp
+    delta_h = [0.01_wp, 0.02_wp]
+    delta_s = 0.0_wp
+
+    allocate(real_state)
+    call real_state%initialize(3, info)
+    call real_state%factorize_fresh(h, s, 0.5_wp, info)
+    call real_state%replace_symmetric(1, delta_h, delta_s, info)
+    call check(info == QR_SUCCESS .and. &
+               real_state%updates_since_fresh == 1, &
+               'real allocatable state completes an update', failures)
+    deallocate(real_state)
+    call check(.not. allocated(real_state), &
+               'real state object deallocates explicitly', failures)
+
+    allocate(real_state)
+    call real_state%initialize(2, info)
+    call real_state%factorize_fresh(h, s, 2.0_wp, info)
+    call check(info == QR_SUCCESS .and. real_state%capacity == 2 .and. &
+               real_state%n == 2 .and. &
+               abs(real_state%shift - 2.0_wp) <= epsilon(1.0_wp) .and. &
+               real_state%updates_since_fresh == 0, &
+               'real state reallocates with new capacity and shift', failures)
+    deallocate(real_state)
+
+    complex_h = cmplx(h, 0.0_wp, kind=wp)
+    complex_s = cmplx(s, 0.0_wp, kind=wp)
+    complex_delta_h = cmplx(delta_h, 0.0_wp, kind=wp)
+    complex_delta_s = cmplx(delta_s, 0.0_wp, kind=wp)
+    allocate(complex_state)
+    call complex_state%initialize(3, info)
+    call complex_state%factorize_fresh(complex_h, complex_s, 0.5_wp, info)
+    call complex_state%replace_symmetric(1, complex_delta_h, &
+                                         complex_delta_s, info)
+    call check(info == QR_SUCCESS .and. &
+               complex_state%updates_since_fresh == 1, &
+               'complex allocatable state completes an update', failures)
+    deallocate(complex_state)
+    call check(.not. allocated(complex_state), &
+               'complex state object deallocates explicitly', failures)
+
+    allocate(complex_state)
+    call complex_state%initialize(2, info)
+    call complex_state%factorize_fresh(complex_h, complex_s, 2.0_wp, info)
+    call check(info == QR_SUCCESS .and. complex_state%capacity == 2 .and. &
+               complex_state%n == 2 .and. &
+               abs(complex_state%shift - 2.0_wp) <= epsilon(1.0_wp) .and. &
+               complex_state%updates_since_fresh == 0, &
+               'complex state reallocates with new capacity and shift', failures)
+    deallocate(complex_state)
+  end subroutine test_state_lifetimes
 
 end program test_initialization
