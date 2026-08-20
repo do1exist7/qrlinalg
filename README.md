@@ -1,14 +1,17 @@
 # qrlinalg
 
-`qrlinalg` is the serial QR-state layer intended for ECGPACK generalized
-symmetric and Hermitian eigenproblems. Version 0.1.0 implements initialization
-and fresh real/complex QR factorization plus generalized inverse iteration.
+`qrlinalg` is the QR-state layer intended for ECGPACK generalized symmetric
+and Hermitian eigenproblems. Version 0.1.1 implements initialization and fresh
+real/complex QR factorization plus generalized inverse iteration.
 Symmetric/Hermitian row-and-column replacement, end-appending, and principal-
 submatrix deletion update the stored factors in place.
 
 The project vendors the generic-precision `qrupdate-ng` sources under
 `src/qrupdate/`, copied from `linalg/src/qrupdate`. That directory records the
 upstream commit and retains the QR-update GPL license and the Netlib notices.
+The bundled BLAS additionally contains precision-specific DGEMM and ZGEMM
+kernels developed on the `optimize/qr-hotpaths` branch. LAPACK and the remaining
+BLAS routines retain their original generic-precision implementations.
 
 ## Build
 
@@ -20,12 +23,30 @@ make                         # release, wp=8, gfortran
 make PREC=10 CONFIG=debug
 make PREC=16 COMPILER=ifx
 make check                   # debug builds at wp=8, 10, and 16
+make OPENMP=1                # opt-in threaded GEMM build
+OMP_NUM_THREADS=4 make OPENMP=1 check
 ```
 
 Supported compilers are `gfortran`, `ifort`, `ifx`, and `nvfortran`. Artifacts
-are written to `build/<configuration>-wp<kind>/`. The build is serial and links
-the bundled generic-precision BLAS/LAPACK; it never uses MPI or a conventional
-fixed-double system BLAS/LAPACK.
+are written to `build/<configuration>-wp<kind>/`; OpenMP builds use the
+corresponding `-omp` directory suffix. The default `OPENMP=0` build is serial.
+The library always links the bundled generic-precision BLAS/LAPACK and never
+uses MPI or a conventional fixed-double system BLAS/LAPACK.
+
+`OPENMP=1` enables compiler OpenMP support (`-fopenmp`, `-qopenmp`, or `-mp`,
+as appropriate) and parallelizes sufficiently large independent output-column
+groups inside DGEMM and ZGEMM. Small products remain serial to avoid thread
+startup overhead. Work is statically partitioned, and no MPI or application-
+level parallel runtime is introduced. Set `OMP_NUM_THREADS` using the normal
+OpenMP convention; the library does not choose or modify the thread count.
+
+The optimized kernels preserve the public BLAS interface and the selected
+working kind. DGEMM uses separate kernels for `wp=8`, `wp=10`, and `wp=16`,
+while the QR-dominant conjugate-transposed ZGEMM path has a `wp=8` tiled kernel.
+Parallel floating-point execution may differ from a serial result by ordinary
+roundoff, so numerical results should be compared with precision-scaled
+tolerances rather than bitwise equality. A mutable QR state must still not be
+used concurrently by separate application threads.
 
 An fpm 0.13-or-newer build defaults to `wp=8`:
 
@@ -35,6 +56,32 @@ fpm build
 
 For `wp=10` or `wp=16`, change the single `QRLINALG_WP` macro in `fpm.toml`
 before building. This is a compile-time choice; one library contains one `wp`.
+
+## v0.1.1 optimization snapshot
+
+Version 0.1.1 adds the precision-specialized GEMM kernels and optional OpenMP
+worksharing described above. The following fresh-factorization measurements
+come from the optimization branch's final comparison on an Intel Core
+i7-8565U under WSL2, using GNU Fortran 15.2.0, `wp=8`, `-O3 -march=native`,
+order 1000, and four pinned physical cores for OpenMP:
+
+| Arithmetic | Pre-optimization BLAS | Optimized serial | OpenMP, 4 cores | Serial speedup | OpenMP speedup |
+|---|---:|---:|---:|---:|---:|
+| Real | 845.76 ms | 320.23 ms | 203.09 ms | 2.64x | 4.16x |
+| Complex | 1523.50 ms | 1158.65 ms | 537.33 ms | 1.31x | 2.84x |
+
+The OpenMP column worksharing provided a further 1.58x real and 2.16x complex
+speedup over the optimized serial kernels in that comparison. Representative
+order-500 factorization-stage measurements showed four-thread speedups of
+1.78x for `wp=10` real, 1.94x for `wp=10` complex, and 1.67x for `wp=16` real.
+No performance claim is made for `wp=16` complex because its calibration run
+exceeded 30 seconds.
+
+These results characterize one compiler and machine, not a portable guarantee.
+OpenMP can lose to the serial build for small matrices, update operations are
+not threaded, and eight-thread SMT scaling was unstable on the four-core test
+host. The default therefore remains serial; benchmark the intended matrix
+sizes and use physical-core affinity before selecting `OPENMP=1` in production.
 
 ## Complete example
 
@@ -85,6 +132,7 @@ During development, run the complete suite at one working kind with:
 make check-one PREC=8
 make check-one PREC=10
 make check-one PREC=16
+OMP_NUM_THREADS=4 make OPENMP=1 check
 ```
 
 Pass `COMPILER=ifx`, `COMPILER=ifort`, or `COMPILER=nvfortran` to either form
@@ -95,13 +143,18 @@ individual executable can be rerun directly, for example:
 ./build/test-wp8/test_replacement
 ```
 
-The seven independently reported executables cover:
+The nine independently reported executables cover:
 
 - `test_initialization`: invalid initialization, state metadata, and every
   state-owned workspace extent;
 - `test_factorization`: real and complex analytical QR reconstruction,
   orthogonality/unitarity, triangularity, caller ownership, and rejected-call
   state preservation;
+- `test_dgemm`: every real transpose spelling, scalar edge cases, rectangular
+  optimized paths and tails, padded leading dimensions, large OpenMP paths,
+  output-padding preservation, and `beta=0` handling without reading `C`;
+- `test_zgemm`: the corresponding complex transpose and conjugation cases,
+  including QR-shaped tiled products and OpenMP paths;
 - `test_replacement`: 100 successive real symmetric updates and 100 successive
   complex Hermitian updates, checking analytical reconstruction and factor
   quality after every update, caller ownership, counters, and rejected updates;

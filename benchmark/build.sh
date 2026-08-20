@@ -36,7 +36,7 @@ fi
 
 case "$compiler" in
   gfortran)
-    opt_flags=(-O3 -march=native)
+    opt_flags=(-O3 -g -march=native)
     warning_flags=(-Wall -Wextra -Wno-unused-dummy-argument)
     fixed_flags=(-ffixed-line-length-none)
     preprocess_flags=(-cpp "-DQRLINALG_WP=$precision")

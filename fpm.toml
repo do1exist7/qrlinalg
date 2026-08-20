@@ -1,5 +1,5 @@
 name = "qrlinalg"
-version = "0.1.0"
+version = "0.1.1"
 license = "GPL-3.0-or-later"
 
 [build]
@@ -11,6 +11,6 @@ auto-tests = false
 source-dir = "src"
 
 [preprocess.cpp]
-suffixes = ["f90"]
+suffixes = ["f", "f90"]
 directories = ["src"]
 macros = ["QRLINALG_WP=8"]
