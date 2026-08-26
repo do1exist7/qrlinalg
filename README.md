@@ -13,6 +13,10 @@ The bundled BLAS additionally contains precision-specific DGEMM and ZGEMM
 kernels developed on the `optimize/qr-hotpaths` branch. LAPACK and the remaining
 BLAS routines retain their original generic-precision implementations.
 
+For source ownership, build ordering, API mapping, matrix conventions, and
+acceptance tests when importing the library into ECGPACK, see
+[`docs/ECGPACK_INTEGRATION.md`](docs/ECGPACK_INTEGRATION.md).
+
 ## Build
 
 Make selects one working precision at compile time and uses the matching
