@@ -31,7 +31,7 @@ module qrlinalg
   integer, parameter, public :: QR_SUCCESS = 0
     !The requested operation completed successfully.
   integer, parameter, public :: QR_ERR_INVALID_ARGUMENT = 1
-    !An argument, state, dimension, or capacity is invalid.
+    !A scalar control, index, or mathematical input property is invalid.
   integer, parameter, public :: QR_ERR_ALLOCATION = 2
     !Initialization could not allocate all required state storage.
   integer, parameter, public :: QR_ERR_NOT_IMPLEMENTED = 3
@@ -42,6 +42,16 @@ module qrlinalg
     !The stored shifted factorization is singular or numerically unusable.
   integer, parameter, public :: QR_ERR_NO_CONVERGENCE = 6
     !Inverse iteration reached max_iter before satisfying the tolerance.
+  integer, parameter, public :: QR_ERR_INVALID_STATE = 7
+    !The state is uninitialized, invalid, or missing required owned storage.
+  integer, parameter, public :: QR_ERR_DIMENSION_MISMATCH = 8
+    !A caller-owned array has an incompatible or empty extent.
+  integer, parameter, public :: QR_ERR_CAPACITY_EXCEEDED = 9
+    !The requested active order is larger than the initialized capacity.
+  integer, parameter, public :: QR_ERR_ZERO_INITIAL_VECTOR = 10
+    !The supplied inverse-iteration starting vector is numerically zero.
+  integer, parameter, public :: QR_ERR_NONPOSITIVE_OVERLAP = 11
+    !The final vector has a non-positive or numerically zero overlap norm.
 
   public :: wp
   public :: qr_real_state
@@ -186,6 +196,7 @@ module qrlinalg
     integer(int64) :: updates_since_fresh = 0_int64
   contains
     procedure :: initialize => real_initialize
+    procedure :: clear => clear_real_state
     procedure :: factorize_fresh => real_factorize_fresh
     procedure :: replace_symmetric => real_replace_symmetric
     procedure :: append_symmetric => real_append_symmetric
@@ -225,6 +236,7 @@ module qrlinalg
     integer(int64) :: updates_since_fresh = 0_int64
   contains
     procedure :: initialize => complex_initialize
+    procedure :: clear => clear_complex_state
     procedure :: factorize_fresh => complex_factorize_fresh
     procedure :: replace_symmetric => complex_replace_symmetric
     procedure :: append_symmetric => complex_append_symmetric
@@ -243,13 +255,18 @@ contains
   subroutine clear_real_state(self)
   !Subroutine clear_real_state releases every allocation owned by a real QR
   !state and restores the state to its default, uninitialized condition. It is
-  !used before reinitialization and after a partial allocation failure. Calling
-  !the routine for an already empty state is valid.
+  !the implementation of the public clear() binding and is also used before
+  !reinitialization and after a partial allocation failure. Calling clear() for
+  !an already empty state is valid and has no effect beyond restoring default
+  !metadata values.
   !
   !  Input/output parameter:
   !    self - The real QR state. On exit all allocatable components are
   !           unallocated; n and capacity are zero; valid is false; shift and
   !           both structural-update counters are zero.
+  !
+  !The routine allocates no storage and has no failure status. After clear(),
+  !initialize must be called before another factorization can be constructed.
     class(qr_real_state), intent(inout) :: self
 
     if (allocated(self%q)) deallocate(self%q)
@@ -270,12 +287,17 @@ contains
   !Subroutine clear_complex_state releases every allocation owned by a complex
   !QR state and restores the state to its default, uninitialized condition. In
   !addition to the complex arrays it releases the real workspace required by
-  !complex plane rotations. Calling the routine for an empty state is valid.
+  !complex plane rotations. It implements the public clear() binding and is
+  !also used by initialization failure handling. Calling clear() for an empty
+  !state is valid.
   !
   !  Input/output parameter:
   !    self - The complex QR state. On exit all allocatable components are
   !           unallocated and all metadata and counters have their default
   !           values.
+  !
+  !The routine allocates no storage and has no failure status. After clear(),
+  !initialize must be called before another factorization can be constructed.
     class(qr_complex_state), intent(inout) :: self
 
     if (allocated(self%q)) deallocate(self%q)
@@ -521,9 +543,12 @@ contains
   !
   !  Output parameter:
   !    info  - QR_SUCCESS when both LAPACK stages succeed;
-  !            QR_ERR_INVALID_ARGUMENT for an uninitialized state, a
-  !            nonsquare or inconsistent matrix, an empty matrix, or n greater
-  !            than capacity;
+  !            QR_ERR_INVALID_STATE when self has not been initialized or its
+  !            required state-owned factorization storage is unavailable;
+  !            QR_ERR_DIMENSION_MISMATCH when H or S is nonsquare, their
+  !            orders differ, or their common order is zero;
+  !            QR_ERR_CAPACITY_EXCEEDED when their common order is greater
+  !            than the initialized capacity;
   !            QR_ERR_FACTORIZATION when DGEQRF or DORGQR reports an error.
   !
   !All argument checks are completed before existing factors are overwritten.
@@ -538,14 +563,19 @@ contains
 
     !Check initialization, matrix shapes, active order, and capacity before
     !overwriting any component of a previously valid factorization.
-    info = QR_ERR_INVALID_ARGUMENT
+    info = QR_ERR_INVALID_STATE
     if (self%capacity <= 0 .or. .not. allocated(self%q)) return
+    info = QR_ERR_DIMENSION_MISMATCH
     if (size(h, 1) /= size(h, 2)) return
     if (size(s, 1) /= size(s, 2)) return
     if (size(h, 1) /= size(s, 1)) return
 
     matrix_n = size(h, 1)
-    if (matrix_n <= 0 .or. matrix_n > self%capacity) return
+    if (matrix_n <= 0) return
+    if (matrix_n > self%capacity) then
+      info = QR_ERR_CAPACITY_EXCEEDED
+      return
+    end if
 
     !The Q buffer is about to be overwritten. Mark the factors invalid until
     !both the factorization and explicit-Q generation have completed.
@@ -635,8 +665,10 @@ contains
   !            real_factorize_fresh, with unitary Q in place of orthogonal Q.
   !
   !  Output parameter:
-  !    info  - QR_SUCCESS, QR_ERR_INVALID_ARGUMENT, or QR_ERR_FACTORIZATION,
-  !            under the conditions documented for real_factorize_fresh.
+  !    info  - QR_SUCCESS, QR_ERR_INVALID_STATE,
+  !            QR_ERR_DIMENSION_MISMATCH, QR_ERR_CAPACITY_EXCEEDED,
+  !            QR_ERR_INVALID_ARGUMENT, or QR_ERR_FACTORIZATION under the
+  !            conditions documented for real_factorize_fresh.
   !
   !A diagonal that is not real within the tolerance above returns
   !QR_ERR_INVALID_ARGUMENT and preserves existing factors. A failure after
@@ -651,14 +683,19 @@ contains
     real(wp) :: s_diagonal_tolerance, s_scale
 
     !Validate all state and dimension requirements before modifying Q or R.
-    info = QR_ERR_INVALID_ARGUMENT
+    info = QR_ERR_INVALID_STATE
     if (self%capacity <= 0 .or. .not. allocated(self%q)) return
+    info = QR_ERR_DIMENSION_MISMATCH
     if (size(h, 1) /= size(h, 2)) return
     if (size(s, 1) /= size(s, 2)) return
     if (size(h, 1) /= size(s, 1)) return
 
     matrix_n = size(h, 1)
-    if (matrix_n <= 0 .or. matrix_n > self%capacity) return
+    if (matrix_n <= 0) return
+    if (matrix_n > self%capacity) then
+      info = QR_ERR_CAPACITY_EXCEEDED
+      return
+    end if
 
     !Determine diagonal tolerances from the same lower triangles that define
     !the matrices. Reading the unused upper triangles here would defeat the
@@ -673,6 +710,7 @@ contains
     end do
     h_diagonal_tolerance = 100.0_wp * epsilon(1.0_wp) * h_scale
     s_diagonal_tolerance = 100.0_wp * epsilon(1.0_wp) * s_scale
+    info = QR_ERR_INVALID_ARGUMENT
     do i = 1, matrix_n
       if (abs(aimag(h(i,i))) > h_diagonal_tolerance) return
       if (abs(aimag(s(i,i))) > s_diagonal_tolerance) return
@@ -761,11 +799,13 @@ contains
   !
   !  Output parameter:
   !    info    - QR_SUCCESS when both rank-one updates are applied;
-  !              QR_ERR_INVALID_ARGUMENT when the state is invalid, idx is
-  !              outside 1:n, either change vector has length other than n, or
-  !              required state workspace is unavailable.
+  !              QR_ERR_INVALID_STATE when self has no valid factorization or
+  !              required state-owned factor or workspace storage is absent;
+  !              QR_ERR_INVALID_ARGUMENT when idx is outside 1:n;
+  !              QR_ERR_DIMENSION_MISMATCH when either change vector has
+  !              length other than n.
   !
-  !All validation precedes modification of Q or R, so QR_ERR_INVALID_ARGUMENT
+  !All validation precedes modification of Q or R, so every error status
   !preserves the complete state. The validated qr1up calls have no numerical
   !failure return. No allocation is performed.
     class(qr_real_state), intent(inout) :: self
@@ -774,14 +814,20 @@ contains
     integer, intent(out) :: info
     integer :: i, matrix_n
 
-    info = QR_ERR_INVALID_ARGUMENT
+    info = QR_ERR_INVALID_STATE
     if (.not. self%valid .or. self%n <= 0) return
     if (.not. allocated(self%q) .or. .not. allocated(self%r)) return
     if (.not. allocated(self%update_work)) return
     matrix_n = self%n
-    if (idx < 1 .or. idx > matrix_n) return
-    if (size(delta_h) /= matrix_n .or. size(delta_s) /= matrix_n) return
     if (size(self%update_work) < 4 * matrix_n) return
+    if (idx < 1 .or. idx > matrix_n) then
+      info = QR_ERR_INVALID_ARGUMENT
+      return
+    end if
+    if (size(delta_h) /= matrix_n .or. size(delta_s) /= matrix_n) then
+      info = QR_ERR_DIMENSION_MISMATCH
+      return
+    end if
 
     !First apply d*e_idx^T. The update vectors occupy the first two workspace
     !blocks and qr1up uses the remaining two blocks as rotation workspace.
@@ -841,9 +887,11 @@ contains
   !
   !  Output parameter:
   !    info    - QR_SUCCESS when the Hermitian replacement is complete;
+  !              QR_ERR_INVALID_STATE, QR_ERR_DIMENSION_MISMATCH, or
   !              QR_ERR_INVALID_ARGUMENT under the real-routine validation
-  !              conditions or when the represented diagonal change is not
-  !              real within the tolerance above.
+  !              conditions. QR_ERR_INVALID_ARGUMENT also reports a
+  !              represented diagonal change that is not real within the
+  !              tolerance above.
   !
   !Every rejection occurs before Q or R is modified. The routine allocates no
   !memory and increments each counter once, rather than once per rank-one term.
@@ -855,16 +903,22 @@ contains
     real(wp) :: diagonal_tolerance, update_scale
     integer :: i, matrix_n
 
-    info = QR_ERR_INVALID_ARGUMENT
+    info = QR_ERR_INVALID_STATE
     if (.not. self%valid .or. self%n <= 0) return
     if (.not. allocated(self%q) .or. .not. allocated(self%r)) return
     if (.not. allocated(self%update_work)) return
     if (.not. allocated(self%real_work)) return
     matrix_n = self%n
-    if (idx < 1 .or. idx > matrix_n) return
-    if (size(delta_h) /= matrix_n .or. size(delta_s) /= matrix_n) return
     if (size(self%update_work) < 3 * matrix_n) return
     if (size(self%real_work) < matrix_n) return
+    if (idx < 1 .or. idx > matrix_n) then
+      info = QR_ERR_INVALID_ARGUMENT
+      return
+    end if
+    if (size(delta_h) /= matrix_n .or. size(delta_s) /= matrix_n) then
+      info = QR_ERR_DIMENSION_MISMATCH
+      return
+    end if
 
     !Determine the scale and validate the diagonal before either qr1up call.
     update_scale = 1.0_wp
@@ -876,7 +930,10 @@ contains
     change = delta_h(idx) - &
              cmplx(self%shift, 0.0_wp, kind=wp) * delta_s(idx)
     diagonal_tolerance = 100.0_wp * epsilon(1.0_wp) * update_scale
-    if (abs(aimag(change)) > diagonal_tolerance) return
+    if (abs(aimag(change)) > diagonal_tolerance) then
+      info = QR_ERR_INVALID_ARGUMENT
+      return
+    end if
 
     !Apply d*e_idx^H. The first three complex workspace blocks contain u, v,
     !and the qr1up work vector; real_work stores the rotation cosines.
@@ -950,10 +1007,13 @@ contains
   !
   !  Output parameter:
   !    info     - QR_SUCCESS when both insertions complete;
-  !               QR_ERR_INVALID_ARGUMENT when self has no valid factors,
-  !               active order has reached capacity, either input length is
-  !               not self%n+1, or required factor/work storage is absent or
-  !               too small.
+  !               QR_ERR_INVALID_STATE when self has no valid factors or
+  !               required state-owned factor/work storage is absent or too
+  !               small;
+  !               QR_ERR_CAPACITY_EXCEEDED when active order has reached the
+  !               initialized capacity;
+  !               QR_ERR_DIMENSION_MISMATCH when either input length is not
+  !               self%n+1.
   !
   !All recoverable failures are detected before qrinc modifies the factors and
   !therefore preserve the complete state. The validated qrinc and qrinr calls
@@ -963,14 +1023,21 @@ contains
     integer, intent(out) :: info
     integer :: i, new_n, old_n
 
-    info = QR_ERR_INVALID_ARGUMENT
+    info = QR_ERR_INVALID_STATE
     if (.not. self%valid .or. self%n <= 0) return
     if (.not. allocated(self%q) .or. .not. allocated(self%r)) return
     if (.not. allocated(self%update_work)) return
     old_n = self%n
-    if (old_n >= self%capacity) return
+    if (old_n >= self%capacity) then
+      info = QR_ERR_CAPACITY_EXCEEDED
+      return
+    end if
     new_n = old_n + 1
-    if (size(h_column) /= new_n .or. size(s_column) /= new_n) return
+    if (size(h_column) /= new_n .or. size(s_column) /= new_n) then
+      info = QR_ERR_DIMENSION_MISMATCH
+      return
+    end if
+    info = QR_ERR_INVALID_STATE
     if (size(self%q, 1) < self%capacity .or. &
         size(self%q, 2) < self%capacity) return
     if (size(self%r, 1) < self%capacity .or. &
@@ -1027,9 +1094,11 @@ contains
   !
   !  Output parameter:
   !    info     - QR_SUCCESS when the Hermitian append completes;
-  !               QR_ERR_INVALID_ARGUMENT under the validation conditions of
-  !               real_append_symmetric or when either physical diagonal has
-  !               an imaginary part larger than its tolerance above.
+  !               QR_ERR_INVALID_STATE, QR_ERR_CAPACITY_EXCEEDED, or
+  !               QR_ERR_DIMENSION_MISMATCH under the corresponding validation
+  !               conditions of real_append_symmetric;
+  !               QR_ERR_INVALID_ARGUMENT when either physical diagonal has an
+  !               imaginary part larger than its tolerance above.
   !
   !All rejection paths precede factor modification and preserve the complete
   !state. Caller arrays are not modified, and no allocation is performed.
@@ -1041,15 +1110,22 @@ contains
     real(wp) :: s_diagonal_tolerance, s_scale
     integer :: i, new_n, old_n
 
-    info = QR_ERR_INVALID_ARGUMENT
+    info = QR_ERR_INVALID_STATE
     if (.not. self%valid .or. self%n <= 0) return
     if (.not. allocated(self%q) .or. .not. allocated(self%r)) return
     if (.not. allocated(self%update_work)) return
     if (.not. allocated(self%real_work)) return
     old_n = self%n
-    if (old_n >= self%capacity) return
+    if (old_n >= self%capacity) then
+      info = QR_ERR_CAPACITY_EXCEEDED
+      return
+    end if
     new_n = old_n + 1
-    if (size(h_column) /= new_n .or. size(s_column) /= new_n) return
+    if (size(h_column) /= new_n .or. size(s_column) /= new_n) then
+      info = QR_ERR_DIMENSION_MISMATCH
+      return
+    end if
+    info = QR_ERR_INVALID_STATE
     if (size(self%q, 1) < self%capacity .or. &
         size(self%q, 2) < self%capacity) return
     if (size(self%r, 1) < self%capacity .or. &
@@ -1063,8 +1139,11 @@ contains
     s_scale = max(1.0_wp, maxval(abs(s_column)))
     h_diagonal_tolerance = 100.0_wp * epsilon(1.0_wp) * h_scale
     s_diagonal_tolerance = 100.0_wp * epsilon(1.0_wp) * s_scale
-    if (abs(aimag(h_column(new_n))) > h_diagonal_tolerance) return
-    if (abs(aimag(s_column(new_n))) > s_diagonal_tolerance) return
+    if (abs(aimag(h_column(new_n))) > h_diagonal_tolerance .or. &
+        abs(aimag(s_column(new_n))) > s_diagonal_tolerance) then
+      info = QR_ERR_INVALID_ARGUMENT
+      return
+    end if
 
     do i = 1, old_n
       self%update_work(i) = h_column(i) - &
@@ -1118,9 +1197,10 @@ contains
   !
   !  Output parameter:
   !    info - QR_SUCCESS when both deletions complete;
-  !           QR_ERR_INVALID_ARGUMENT when self is invalid, self%n is not at
-  !           least two, idx is outside 1:self%n, or required factor/work
-  !           storage is absent or too small.
+  !           QR_ERR_INVALID_STATE when self has no valid factorization or
+  !           required state-owned factor/work storage is absent or too small;
+  !           QR_ERR_INVALID_ARGUMENT when self has order one or idx is outside
+  !           1:self%n.
   !
   !All recoverable failures precede qrdec and preserve the complete state.
   !The validated qrdec and qrder kernels have no numerical failure result.
@@ -1132,12 +1212,15 @@ contains
     integer, intent(out) :: info
     integer :: i, new_n, old_n
 
-    info = QR_ERR_INVALID_ARGUMENT
-    if (.not. self%valid .or. self%n < 2) return
+    info = QR_ERR_INVALID_STATE
+    if (.not. self%valid .or. self%n <= 0) return
     if (.not. allocated(self%q) .or. .not. allocated(self%r)) return
     if (.not. allocated(self%update_work)) return
     old_n = self%n
-    if (idx < 1 .or. idx > old_n) return
+    if (old_n < 2 .or. idx < 1 .or. idx > old_n) then
+      info = QR_ERR_INVALID_ARGUMENT
+      return
+    end if
     if (size(self%q, 1) < self%capacity .or. &
         size(self%q, 2) < self%capacity) return
     if (size(self%r, 1) < self%capacity .or. &
@@ -1178,8 +1261,9 @@ contains
   !           inactive-storage changes are the same as for the real routine.
   !
   !  Output parameter:
-  !    info - QR_SUCCESS on completion or QR_ERR_INVALID_ARGUMENT under the
-  !           validation conditions documented for real_delete_symmetric.
+  !    info - QR_SUCCESS, QR_ERR_INVALID_STATE, or QR_ERR_INVALID_ARGUMENT
+  !           under the validation conditions documented for
+  !           real_delete_symmetric.
   !
   !All validation is completed before factor storage is modified. The routine
   !allocates no memory and rejects deletion from an order-one state.
@@ -1188,13 +1272,16 @@ contains
     integer, intent(out) :: info
     integer :: i, new_n, old_n
 
-    info = QR_ERR_INVALID_ARGUMENT
-    if (.not. self%valid .or. self%n < 2) return
+    info = QR_ERR_INVALID_STATE
+    if (.not. self%valid .or. self%n <= 0) return
     if (.not. allocated(self%q) .or. .not. allocated(self%r)) return
     if (.not. allocated(self%update_work)) return
     if (.not. allocated(self%real_work)) return
     old_n = self%n
-    if (idx < 1 .or. idx > old_n) return
+    if (old_n < 2 .or. idx < 1 .or. idx > old_n) then
+      info = QR_ERR_INVALID_ARGUMENT
+      return
+    end if
     if (size(self%q, 1) < self%capacity .or. &
         size(self%q, 2) < self%capacity) return
     if (size(self%r, 1) < self%capacity .or. &
@@ -1304,8 +1391,15 @@ contains
   !                is a convergence estimate, not a rigorously bounded error.
   !    num_iter  - Number of inverse iterations performed.
   !    info      - QR_SUCCESS when the stopping criterion is satisfied;
-  !                QR_ERR_INVALID_ARGUMENT for an invalid state, dimension,
-  !                iteration limit, starting vector, or non-positive x^T*S*x;
+  !                QR_ERR_INVALID_STATE when self has no valid factorization
+  !                or required state-owned factor/work storage is absent;
+  !                QR_ERR_DIMENSION_MISMATCH when S, v_initial, or x has an
+  !                extent inconsistent with the active order;
+  !                QR_ERR_INVALID_ARGUMENT when max_iter is not positive;
+  !                QR_ERR_ZERO_INITIAL_VECTOR when v_initial is numerically
+  !                zero in the working precision;
+  !                QR_ERR_NONPOSITIVE_OVERLAP when the final x^T*S*x is not
+  !                greater than the precision-scaled zero threshold;
   !                QR_ERR_SINGULAR when R cannot be used safely or an
   !                iteration produces a numerically zero vector;
   !                QR_ERR_NO_CONVERGENCE when max_iter is reached. In this
@@ -1332,7 +1426,7 @@ contains
     lambda = 0.0_wp
     rel_acc = huge(1.0_wp)
     num_iter = 0
-    info = QR_ERR_INVALID_ARGUMENT
+    info = QR_ERR_INVALID_STATE
 
     !Verify the factorization state, array dimensions, iteration limit, and
     !starting-vector norm before entering a BLAS routine.
@@ -1340,10 +1434,19 @@ contains
     if (.not. allocated(self%q) .or. .not. allocated(self%r)) return
     if (.not. allocated(self%solve_work)) return
     matrix_n = self%n
-    if (size(s, 1) /= matrix_n .or. size(s, 2) /= matrix_n) return
-    if (size(v_initial) /= matrix_n .or. size(x) /= matrix_n) return
-    if (max_iter <= 0) return
-    if (real_norm_squared(matrix_n, v_initial) <= tiny(1.0_wp)) return
+    if (size(s, 1) /= matrix_n .or. size(s, 2) /= matrix_n .or. &
+        size(v_initial) /= matrix_n .or. size(x) /= matrix_n) then
+      info = QR_ERR_DIMENSION_MISMATCH
+      return
+    end if
+    if (max_iter <= 0) then
+      info = QR_ERR_INVALID_ARGUMENT
+      return
+    end if
+    if (real_norm_squared(matrix_n, v_initial) <= tiny(1.0_wp)) then
+      info = QR_ERR_ZERO_INITIAL_VECTOR
+      return
+    end if
 
     !DGEQRF can complete for a rank-deficient matrix. Test the diagonal of R
     !explicitly before DTRSV performs divisions during inverse iteration.
@@ -1431,7 +1534,7 @@ contains
     overlap_norm_squared = dot_product(x, &
                                        self%solve_work(1:matrix_n))
     if (overlap_norm_squared <= tiny(1.0_wp)) then
-      info = QR_ERR_INVALID_ARGUMENT
+      info = QR_ERR_NONPOSITIVE_OVERLAP
       return
     end if
 
@@ -1538,8 +1641,15 @@ contains
   !    rel_acc   - Real direction-change estimate from the final iteration.
   !    num_iter  - Number of inverse iterations performed.
   !    info      - QR_SUCCESS when convergence is detected;
-  !                QR_ERR_INVALID_ARGUMENT for an invalid state, dimensions,
-  !                iteration limit, starting vector, or non-positive x^H*S*x;
+  !                QR_ERR_INVALID_STATE when self has no valid factorization
+  !                or required state-owned factor/work storage is absent;
+  !                QR_ERR_DIMENSION_MISMATCH when S, v_initial, or x has an
+  !                extent inconsistent with the active order;
+  !                QR_ERR_INVALID_ARGUMENT when max_iter is not positive;
+  !                QR_ERR_ZERO_INITIAL_VECTOR when v_initial is numerically
+  !                zero in the working precision;
+  !                QR_ERR_NONPOSITIVE_OVERLAP when the final x^H*S*x is not
+  !                greater than the precision-scaled zero threshold;
   !                QR_ERR_SINGULAR for an unusable R or zero iterate;
   !                QR_ERR_NO_CONVERGENCE when max_iter is reached. The latter
   !                status still returns the final eigenpair approximation.
@@ -1567,7 +1677,7 @@ contains
     lambda = 0.0_wp
     rel_acc = huge(1.0_wp)
     num_iter = 0
-    info = QR_ERR_INVALID_ARGUMENT
+    info = QR_ERR_INVALID_STATE
 
     !Verify all state, dimension, iteration-limit, and starting-vector
     !requirements before using the stored factors or calling BLAS.
@@ -1575,10 +1685,19 @@ contains
     if (.not. allocated(self%q) .or. .not. allocated(self%r)) return
     if (.not. allocated(self%solve_work)) return
     matrix_n = self%n
-    if (size(s, 1) /= matrix_n .or. size(s, 2) /= matrix_n) return
-    if (size(v_initial) /= matrix_n .or. size(x) /= matrix_n) return
-    if (max_iter <= 0) return
-    if (complex_norm_squared(matrix_n, v_initial) <= tiny(1.0_wp)) return
+    if (size(s, 1) /= matrix_n .or. size(s, 2) /= matrix_n .or. &
+        size(v_initial) /= matrix_n .or. size(x) /= matrix_n) then
+      info = QR_ERR_DIMENSION_MISMATCH
+      return
+    end if
+    if (max_iter <= 0) then
+      info = QR_ERR_INVALID_ARGUMENT
+      return
+    end if
+    if (complex_norm_squared(matrix_n, v_initial) <= tiny(1.0_wp)) then
+      info = QR_ERR_ZERO_INITIAL_VECTOR
+      return
+    end if
 
     !ZGEQRF does not use a positive INFO value to report rank deficiency. The
     !diagonal of R is therefore tested explicitly before ZTRSV is called.
@@ -1667,7 +1786,7 @@ contains
                                dot_product(x, &
                                  self%solve_work(1:matrix_n)), wp)
     if (overlap_norm_squared <= tiny(1.0_wp)) then
-      info = QR_ERR_INVALID_ARGUMENT
+      info = QR_ERR_NONPOSITIVE_OVERLAP
       return
     end if
 

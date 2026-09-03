@@ -63,7 +63,8 @@ contains
     r_before = state%r
     call state%append_symmetric(h_column(1:initial_n), &
                                 s_column(1:initial_n), info)
-    call check(info == QR_ERR_INVALID_ARGUMENT .and. state%n == initial_n .and. &
+    call check(info == QR_ERR_DIMENSION_MISMATCH .and. &
+               state%n == initial_n .and. &
                all(abs(state%q - q_before) <= 0.0_wp) .and. &
                all(abs(state%r - r_before) <= 0.0_wp), &
                'real append rejects wrong extents without changing state', &
@@ -136,14 +137,14 @@ contains
     q_before = state%q
     r_before = state%r
     call state%append_symmetric(h_column, s_column, info)
-    call check(info == QR_ERR_INVALID_ARGUMENT .and. &
+    call check(info == QR_ERR_CAPACITY_EXCEEDED .and. &
                all(abs(state%q - q_before) <= 0.0_wp) .and. &
                all(abs(state%r - r_before) <= 0.0_wp) .and. &
                state%n == capacity .and. &
                state%structural_updates == 3 + num_appends, &
                'real append at capacity preserves the complete state', failures)
     call empty_state%append_symmetric(h_column(1:3), s_column(1:3), info)
-    call check(info == QR_ERR_INVALID_ARGUMENT, &
+    call check(info == QR_ERR_INVALID_STATE, &
                'real append rejects an unfactorized state', failures)
 
     write(*,'(a,i0,3(a,es12.4))') '  real append wp=', wp, &
@@ -158,7 +159,7 @@ contains
   subroutine test_complex_append(failures)
     integer, intent(inout) :: failures
     integer, parameter :: initial_n = 2, capacity = 5, num_appends = 3
-    type(qr_complex_state) :: state
+    type(qr_complex_state) :: state, empty_state
     real(wp), parameter :: shift = -0.2_wp
     complex(wp) :: h(initial_n,initial_n), s(initial_n,initial_n)
     complex(wp) :: expected(capacity,capacity), identity(capacity,capacity)
@@ -198,6 +199,13 @@ contains
     ! rejection, including complete factor and counter preservation.
     h_column = cmplx(0.0_wp, 0.0_wp, kind=wp)
     s_column = cmplx(0.0_wp, 0.0_wp, kind=wp)
+    call state%append_symmetric(h_column(1:initial_n), &
+                                s_column(1:initial_n), info)
+    call check(info == QR_ERR_DIMENSION_MISMATCH, &
+               'complex append distinguishes incorrect extents', failures)
+    call empty_state%append_symmetric(h_column(1:3), s_column(1:3), info)
+    call check(info == QR_ERR_INVALID_STATE, &
+               'complex append distinguishes an invalid state', failures)
     h_column(3) = cmplx(2.0_wp, 0.01_wp, kind=wp)
     s_column(3) = cmplx(1.0_wp, 0.0_wp, kind=wp)
     q_before = state%q
@@ -296,7 +304,7 @@ contains
     q_before = state%q
     r_before = state%r
     call state%append_symmetric(h_column, s_column, info)
-    call check(info == QR_ERR_INVALID_ARGUMENT .and. &
+    call check(info == QR_ERR_CAPACITY_EXCEEDED .and. &
                all(abs(state%q - q_before) <= 0.0_wp) .and. &
                all(abs(state%r - r_before) <= 0.0_wp) .and. &
                state%n == capacity .and. &

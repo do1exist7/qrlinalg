@@ -147,13 +147,14 @@ individual executable can be rerun directly, for example:
 ./build/test-wp8/test_replacement
 ```
 
-The ten independently reported executables cover:
+The eleven independently reported executables cover:
 
 - `test_initialization`: invalid initialization, internal state metadata, and
   every state-owned workspace extent;
 - `test_metadata`: public real and complex metadata queries across
-  initialization, factorization, structural updates, rejected operations, and
-  reinitialization;
+  initialization, factorization, structural updates, rejected operations,
+  explicit cleanup, and reinitialization;
+- `test_status_codes`: stable numeric values for every public status category;
 - `test_factorization`: real and complex analytical QR reconstruction,
   orthogonality/unitarity, triangularity, caller ownership, and rejected-call
   state preservation;
@@ -191,9 +192,9 @@ The failure-regime suite intentionally expects different statuses for
 different mathematical limitations. Degeneracy or a start confined to one
 invariant subspace can produce a valid eigenpair and `QR_SUCCESS`. Oscillation
 and insufficient separation return `QR_ERR_NO_CONVERGENCE` with a finite
-approximation. Singular shifted factors and violations of the positive-
-definite-overlap or nonzero-start preconditions return `QR_ERR_SINGULAR` or
-`QR_ERR_INVALID_ARGUMENT`.
+approximation. Singular shifted factors return `QR_ERR_SINGULAR`, while
+positive-definite-overlap and nonzero-start precondition failures return
+`QR_ERR_NONPOSITIVE_OVERLAP` and `QR_ERR_ZERO_INITIAL_VECTOR`, respectively.
 
 Shared assertions and reference norms live in `test/test_support.f90`. The test
 build exposes private state components with `QRLINALG_TESTING` solely so these
@@ -330,7 +331,10 @@ Calling `initialize` again on an existing state first releases its old factors
 and workspaces, then allocates an empty state for the new capacity. If the state
 object is allocatable, intrinsic `deallocate(state)` releases all of its private
 allocatable components automatically. A non-allocatable local state is cleaned
-up the same way when its scope ends; no separate cleanup routine is required.
+up the same way when its scope ends. A long-lived state can release its storage
+deterministically with `call state%clear()`. The operation is idempotent,
+allocates nothing, and resets the state to its default lifetime metadata;
+`initialize` must be called before the state is used again.
 
 ECGPACK remains the owner of `H` and `S`. A QR state neither copies nor retains
 pointers to them, and it never permanently stores `M = H - shift*S`. A fresh
@@ -382,18 +386,42 @@ vector arguments, caller inputs are copied into state-owned workspace.
 
 ## API status
 
+The public status values are stable. Values `7:11` refine conditions that were
+reported as `QR_ERR_INVALID_ARGUMENT` in earlier releases:
+
+| Symbol | Value | Meaning |
+|---|---:|---|
+| `QR_SUCCESS` | 0 | Operation completed successfully |
+| `QR_ERR_INVALID_ARGUMENT` | 1 | Invalid scalar control, index, or mathematical input property |
+| `QR_ERR_ALLOCATION` | 2 | Initialization could not allocate all storage |
+| `QR_ERR_NOT_IMPLEMENTED` | 3 | Reserved for future API expansion |
+| `QR_ERR_FACTORIZATION` | 4 | LAPACK workspace query or factorization stage failed |
+| `QR_ERR_SINGULAR` | 5 | Shifted factorization or generated iterate is numerically unusable |
+| `QR_ERR_NO_CONVERGENCE` | 6 | Iteration limit reached; final approximation remains available |
+| `QR_ERR_INVALID_STATE` | 7 | State is uninitialized, invalid, or missing owned storage |
+| `QR_ERR_DIMENSION_MISMATCH` | 8 | Caller array extents are empty or incompatible |
+| `QR_ERR_CAPACITY_EXCEEDED` | 9 | Requested active order exceeds initialized capacity |
+| `QR_ERR_ZERO_INITIAL_VECTOR` | 10 | Inverse-iteration starting vector is numerically zero |
+| `QR_ERR_NONPOSITIVE_OVERLAP` | 11 | Final overlap quadratic form is non-positive or numerically zero |
+
 `initialize(capacity, info)` reserves storage for matrices up to `capacity`,
 leaves the active order at zero until `factorize_fresh`, and returns
 `QR_SUCCESS`, `QR_ERR_INVALID_ARGUMENT`, or
 `QR_ERR_ALLOCATION`. It may return `QR_ERR_FACTORIZATION` if either bundled
 LAPACK workspace query rejects the requested configuration.
 
+`clear()` releases all factors and workspace and resets order, capacity, shift,
+validity, and both update counters. It accepts an already empty state and has
+no status result.
+
 `factorize_fresh(H, S, shift, info)` forms `H-shift*S` directly in the Q
 buffer from the lower triangles of H and S, calls the bundled `xGEQRF`,
 extracts upper-triangular R, and calls the bundled `xORGQR/xUNGQR` to generate
 explicit Q. Complex diagonal inputs must be real within a precision-scaled
 tolerance. It allocates nothing and does not retain H or S. It returns
-`QR_SUCCESS`, `QR_ERR_INVALID_ARGUMENT`, or `QR_ERR_FACTORIZATION`.
+`QR_SUCCESS`, `QR_ERR_INVALID_STATE`, `QR_ERR_DIMENSION_MISMATCH`,
+`QR_ERR_CAPACITY_EXCEEDED`, `QR_ERR_INVALID_ARGUMENT`, or
+`QR_ERR_FACTORIZATION`.
 
 `solve(S, v_initial, ...)` implements the mathematical iteration and stopping
 rules of the pristine `GSEPIIS`/`GHEPIIS` routines through the stored QR
@@ -404,15 +432,18 @@ mode 1 produces unit Euclidean norm, and any other value retains unit-largest-
 component scaling. The routine allocates nothing and leaves S and the initial
 vector unchanged.
 
-Successful solves return `QR_SUCCESS`. Invalid dimensions, state, iteration
-limit, starting vector, or non-positive S norm return
-`QR_ERR_INVALID_ARGUMENT`; an unusable triangular factor returns
-`QR_ERR_SINGULAR`. `QR_ERR_NO_CONVERGENCE` still returns the best eigenpair
-obtained within `max_iter`.
+Successful solves return `QR_SUCCESS`. Invalid state, incompatible extents,
+non-positive iteration limit, zero starting vector, and non-positive overlap
+norm return their corresponding status categories from the table above. An
+unusable triangular factor returns `QR_ERR_SINGULAR`.
+`QR_ERR_NO_CONVERGENCE` still returns the best eigenpair obtained within
+`max_iter`.
 
 Both state types expose the same numerical method names:
 
 ```fortran
+call qr%initialize(capacity, info)
+call qr%clear()
 call qr%factorize_fresh(H, S, shift, info)
 call qr%replace_symmetric(idx, delta_h, delta_s, info)
 call qr%append_symmetric(h_column, s_column, info)

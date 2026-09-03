@@ -149,7 +149,7 @@ contains
                'real replacement rejects an invalid index', failures)
     short_vector = 0.0_wp
     call state%replace_symmetric(2, short_vector, short_vector, info)
-    call check(info == QR_ERR_INVALID_ARGUMENT, &
+    call check(info == QR_ERR_DIMENSION_MISMATCH, &
                'real replacement rejects incorrect vector extents', failures)
     call check(all(abs(state%q - q_before) <= 0.0_wp) .and. &
                all(abs(state%r - r_before) <= 0.0_wp) .and. &
@@ -157,7 +157,7 @@ contains
                state%updates_since_fresh == 2 + num_updates, &
                'rejected real replacements preserve the complete state', failures)
     call empty_state%replace_symmetric(1, delta_h, delta_s, info)
-    call check(info == QR_ERR_INVALID_ARGUMENT, &
+    call check(info == QR_ERR_INVALID_STATE, &
                'real replacement rejects an uninitialized state', failures)
 
     write(*,'(a,i0,2(a,es12.4))') '  real replacement wp=', wp, &
@@ -171,12 +171,13 @@ contains
   subroutine test_complex_replacement(failures)
     integer, intent(inout) :: failures
     integer, parameter :: n = 3, capacity = 5, num_updates = 100
-    type(qr_complex_state) :: state
+    type(qr_complex_state) :: state, empty_state
     real(wp), parameter :: shift = -0.4_wp
     complex(wp) :: h(n,n), s(n,n), shifted(n,n), expected(n,n)
     complex(wp) :: delta_h(n), delta_s(n), delta_h_before(n), delta_s_before(n)
     complex(wp) :: identity(n,n), q_before(capacity,capacity)
     complex(wp) :: r_before(capacity,capacity), bad_delta_h(n), change(n)
+    complex(wp) :: short_vector(n-1)
     real(wp) :: residual, unitarity, lower_triangle_error, hermitian_error
     real(wp) :: max_residual, max_unitarity, max_lower_triangle_error
     real(wp) :: tolerance
@@ -320,6 +321,14 @@ contains
                state%updates_since_fresh == 1 + num_updates, &
                'rejected complex replacement preserves the complete state', &
                failures)
+
+    short_vector = cmplx(0.0_wp, 0.0_wp, kind=wp)
+    call state%replace_symmetric(update_idx, short_vector, short_vector, info)
+    call check(info == QR_ERR_DIMENSION_MISMATCH, &
+               'complex replacement distinguishes incorrect extents', failures)
+    call empty_state%replace_symmetric(update_idx, delta_h, delta_s, info)
+    call check(info == QR_ERR_INVALID_STATE, &
+               'complex replacement distinguishes an invalid state', failures)
 
     write(*,'(a,i0,2(a,es12.4))') '  complex replacement wp=', wp, &
       ' max residual=', max_residual, ' max unitarity=', max_unitarity

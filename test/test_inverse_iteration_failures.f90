@@ -331,7 +331,7 @@ contains
     call real_state%factorize_fresh(real_h, real_s, 0.0_wp, info)
     call real_state%solve(real_s, real_v, real_x, lambda, tolerance, 20, 1, &
                           rel_acc, num_iter, info)
-    call check(info == QR_ERR_INVALID_ARGUMENT .and. num_iter == 1 .and. &
+    call check(info == QR_ERR_NONPOSITIVE_OVERLAP .and. num_iter == 1 .and. &
                abs(lambda) <= 0.0_wp .and. all(abs(real_x) < huge(1.0_wp)), &
                'real non-positive overlap norm is reported after iteration', &
                failures)
@@ -344,7 +344,7 @@ contains
     call complex_state%factorize_fresh(complex_h, complex_s, 0.0_wp, info)
     call complex_state%solve(complex_s, complex_v, complex_x, lambda, &
                              tolerance, 20, 1, rel_acc, num_iter, info)
-    call check(info == QR_ERR_INVALID_ARGUMENT .and. num_iter == 1 .and. &
+    call check(info == QR_ERR_NONPOSITIVE_OVERLAP .and. num_iter == 1 .and. &
                abs(lambda) <= 0.0_wp .and. &
                all(abs(complex_x) < huge(1.0_wp)), &
                'complex non-positive overlap norm is reported after iteration', &
@@ -358,7 +358,7 @@ contains
     call real_state%factorize_fresh(real_h, real_s, 0.0_wp, info)
     call real_state%solve(real_s, real_v, real_x, lambda, tolerance, 20, 1, &
                           rel_acc, num_iter, info)
-    call check(info == QR_ERR_INVALID_ARGUMENT .and. num_iter == 0 .and. &
+    call check(info == QR_ERR_ZERO_INITIAL_VECTOR .and. num_iter == 0 .and. &
                all(abs(real_x) <= 0.0_wp), &
                'real roundoff-scale starting vector is rejected', failures)
 
@@ -368,7 +368,7 @@ contains
     call complex_state%factorize_fresh(complex_h, complex_s, 0.0_wp, info)
     call complex_state%solve(complex_s, complex_v, complex_x, lambda, &
                              tolerance, 20, 1, rel_acc, num_iter, info)
-    call check(info == QR_ERR_INVALID_ARGUMENT .and. num_iter == 0 .and. &
+    call check(info == QR_ERR_ZERO_INITIAL_VECTOR .and. num_iter == 0 .and. &
                all(abs(complex_x) <= 0.0_wp), &
                'complex roundoff-scale starting vector is rejected', failures)
   end subroutine test_invalid_overlap_and_tiny_start

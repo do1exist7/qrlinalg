@@ -29,6 +29,7 @@ The following operations are implemented for both `qr_real_state` and
 `qr_complex_state`:
 
 - `initialize(capacity, info)`;
+- `clear()`;
 - `factorize_fresh(H, S, shift, info)`;
 - `replace_symmetric(idx, delta_h, delta_s, info)`;
 - `append_symmetric(h_column, s_column, info)`;
@@ -52,6 +53,9 @@ the updates-since-fresh count, while initialization resets both counters.
 Deletion from an order-one factorization is invalid because the library does
 not represent a valid order-zero factorization. Rejected structural operations
 leave factors, dimensions, validity, shifts, and counters unchanged.
+`clear()` is idempotent, releases all state-owned allocations, resets all
+metadata and counters, and returns no status. A cleared object must be
+initialized before it can be factorized again.
 
 ## Repository layout and source ownership
 
@@ -68,6 +72,8 @@ leave factors, dimensions, validity, shifts, and counters unchanged.
   analytical numerical tests grouped by behavior.
 - `test/test_metadata.f90` verifies the public real and complex metadata
   queries across the complete state lifecycle without accessing components.
+- `test/test_status_codes.f90` fixes the public numeric status assignments and
+  prevents existing status values from being renumbered.
 - `test/test_inverse_iteration_failures.f90` contains analytical tests for
   degenerate, clustered, oscillatory, singular, and precondition-violating
   inverse-iteration regimes.
@@ -313,7 +319,18 @@ Public status codes are defined in `qrlinalg.f90`:
 - `QR_ERR_NOT_IMPLEMENTED`;
 - `QR_ERR_FACTORIZATION`;
 - `QR_ERR_SINGULAR`;
-- `QR_ERR_NO_CONVERGENCE`.
+- `QR_ERR_NO_CONVERGENCE`;
+- `QR_ERR_INVALID_STATE`;
+- `QR_ERR_DIMENSION_MISMATCH`;
+- `QR_ERR_CAPACITY_EXCEEDED`;
+- `QR_ERR_ZERO_INITIAL_VECTOR`;
+- `QR_ERR_NONPOSITIVE_OVERLAP`.
+
+The numeric values `0:6` are retained for compatibility and new status values
+are appended. Use `QR_ERR_INVALID_ARGUMENT` only for invalid scalar controls,
+indices, and mathematical input properties. Distinguish invalid state, caller
+array extents, exhausted capacity, a numerically zero initial vector, and a
+non-positive overlap quadratic form with their dedicated codes.
 
 Recoverable library errors return through `info`. Do not use `error stop`,
 `stop`, or process termination in library routines.
@@ -438,6 +455,8 @@ sensitive or aliasing changes, run an optimized test executable as well.
 The permanent tests must continue to cover:
 
 - valid and invalid initialization;
+- idempotent public cleanup, complete storage release, and reinitialization
+  after cleanup;
 - workspace extents and initial metadata;
 - real and complex fresh QR factorization;
 - lower-triangle-only H and S input, including poisoned unused upper entries;
@@ -455,6 +474,8 @@ The permanent tests must continue to cover:
 - positive and negative tolerance behavior;
 - iteration-limit nonconvergence with a usable returned approximation;
 - singular factors, zero starting vectors, and invalid state errors;
+- stable public status values and distinct state, dimension, capacity,
+  zero-start, and non-positive-overlap failures;
 - exact degeneracy, equidistant shifts, missing target components, slowly
   converging clusters, indefinite overlap matrices, and roundoff-scale starts.
 

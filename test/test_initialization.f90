@@ -13,6 +13,7 @@ program test_initialization
   call test_invalid_initialization(failures)
   call test_real_initialization(failures)
   call test_complex_initialization(failures)
+  call test_public_clear(failures)
   call test_state_lifetimes(failures)
   call finish_suite('qrlinalg initialization', failures)
 
@@ -32,7 +33,7 @@ contains
     h = 1.0_wp
     s = 1.0_wp
     call state%factorize_fresh(h, s, 0.0_wp, info)
-    call check(info == QR_ERR_INVALID_ARGUMENT, &
+    call check(info == QR_ERR_INVALID_STATE, &
                'factorization rejects an uninitialized state', failures)
 
     call state%initialize(0, info)
@@ -48,7 +49,7 @@ contains
     complex_h = cmplx(1.0_wp, 0.0_wp, kind=wp)
     complex_s = cmplx(1.0_wp, 0.0_wp, kind=wp)
     call complex_state%factorize_fresh(complex_h, complex_s, 0.0_wp, info)
-    call check(info == QR_ERR_INVALID_ARGUMENT, &
+    call check(info == QR_ERR_INVALID_STATE, &
                'complex factorization rejects an uninitialized state', failures)
     call complex_state%initialize(-1, info)
     call check(info == QR_ERR_INVALID_ARGUMENT .and. &
@@ -118,6 +119,75 @@ contains
                state%updates_since_fresh == 0, &
                'complex initialize clears update counters', failures)
   end subroutine test_complex_initialization
+
+  ! Verify that the public cleanup operation releases every state-owned array
+  ! and resets all metadata after a valid factorization has been established.
+  ! Calling clear again for the resulting empty state must also be valid.
+  subroutine test_public_clear(failures)
+    integer, intent(inout) :: failures
+    type(qr_real_state) :: real_state
+    type(qr_complex_state) :: complex_state
+    real(wp) :: h(2,2), s(2,2)
+    complex(wp) :: complex_h(2,2), complex_s(2,2)
+    integer :: info
+
+    h = 0.0_wp
+    h(1,1) = 1.0_wp
+    h(2,1) = 0.1_wp
+    h(2,2) = 3.0_wp
+    s = 0.0_wp
+    s(1,1) = 1.0_wp
+    s(2,2) = 1.0_wp
+
+    call real_state%initialize(3, info)
+    call real_state%factorize_fresh(h, s, 0.5_wp, info)
+    call check(info == QR_SUCCESS, &
+               'real state is populated before public clear', failures)
+    call real_state%clear()
+    call check(.not. allocated(real_state%q) .and. &
+               .not. allocated(real_state%r) .and. &
+               .not. allocated(real_state%tau) .and. &
+               .not. allocated(real_state%factor_work) .and. &
+               .not. allocated(real_state%update_work) .and. &
+               .not. allocated(real_state%solve_work), &
+               'real clear releases all owned arrays', failures)
+    call check(real_state%capacity == 0 .and. real_state%n == 0 .and. &
+               .not. real_state%valid .and. &
+               abs(real_state%shift) <= tiny(1.0_wp) .and. &
+               real_state%structural_updates == 0 .and. &
+               real_state%updates_since_fresh == 0, &
+               'real clear resets all internal metadata', failures)
+    call real_state%clear()
+    call check(real_state%capacity == 0 .and. &
+               .not. allocated(real_state%q), &
+               'real clear accepts an already empty state', failures)
+
+    complex_h = cmplx(h, 0.0_wp, kind=wp)
+    complex_s = cmplx(s, 0.0_wp, kind=wp)
+    call complex_state%initialize(3, info)
+    call complex_state%factorize_fresh(complex_h, complex_s, 0.5_wp, info)
+    call check(info == QR_SUCCESS, &
+               'complex state is populated before public clear', failures)
+    call complex_state%clear()
+    call check(.not. allocated(complex_state%q) .and. &
+               .not. allocated(complex_state%r) .and. &
+               .not. allocated(complex_state%tau) .and. &
+               .not. allocated(complex_state%factor_work) .and. &
+               .not. allocated(complex_state%update_work) .and. &
+               .not. allocated(complex_state%solve_work) .and. &
+               .not. allocated(complex_state%real_work), &
+               'complex clear releases all owned arrays', failures)
+    call check(complex_state%capacity == 0 .and. complex_state%n == 0 .and. &
+               .not. complex_state%valid .and. &
+               abs(complex_state%shift) <= tiny(1.0_wp) .and. &
+               complex_state%structural_updates == 0 .and. &
+               complex_state%updates_since_fresh == 0, &
+               'complex clear resets all internal metadata', failures)
+    call complex_state%clear()
+    call check(complex_state%capacity == 0 .and. &
+               .not. allocated(complex_state%q), &
+               'complex clear accepts an already empty state', failures)
+  end subroutine test_public_clear
 
   ! Verify the explicit allocate-update-deallocate-allocate lifecycle used by
   ! long-running callers that want deterministic release of state storage.

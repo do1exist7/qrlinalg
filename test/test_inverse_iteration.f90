@@ -263,9 +263,9 @@ contains
     integer, parameter :: n = 2
     type(qr_real_state) :: empty_state, singular_state, valid_state
     type(qr_complex_state) :: complex_empty, complex_singular, complex_valid
-    real(wp) :: h(n,n), s(n,n), v(n), zero_v(n), x(n)
+    real(wp) :: h(n,n), s(n,n), v(n), zero_v(n), x(n), short_s(1,1)
     complex(wp) :: complex_h(n,n), complex_s(n,n), complex_v(n)
-    complex(wp) :: complex_zero_v(n), complex_x(n)
+    complex(wp) :: complex_zero_v(n), complex_x(n), complex_short_s(1,1)
     real(wp) :: lambda, rel_acc
     integer :: info, num_iter
 
@@ -277,7 +277,7 @@ contains
     call empty_state%solve(s, v, x, lambda, &
                            100.0_wp * epsilon(1.0_wp), 20, 1, &
                            rel_acc, num_iter, info)
-    call check(info == QR_ERR_INVALID_ARGUMENT .and. num_iter == 0, &
+    call check(info == QR_ERR_INVALID_STATE .and. num_iter == 0, &
                'solve rejects an unfactorized state', failures)
 
     call singular_state%initialize(n, info)
@@ -292,10 +292,16 @@ contains
 
     call valid_state%initialize(n, info)
     call valid_state%factorize_fresh(h, s, 2.25_wp, info)
+    short_s = 1.0_wp
+    call valid_state%solve(short_s, v, x, lambda, &
+                           100.0_wp * epsilon(1.0_wp), 20, 1, &
+                           rel_acc, num_iter, info)
+    call check(info == QR_ERR_DIMENSION_MISMATCH .and. num_iter == 0, &
+               'solve distinguishes an incompatible overlap extent', failures)
     call valid_state%solve(s, zero_v, x, lambda, &
                            100.0_wp * epsilon(1.0_wp), 20, 1, &
                            rel_acc, num_iter, info)
-    call check(info == QR_ERR_INVALID_ARGUMENT .and. num_iter == 0, &
+    call check(info == QR_ERR_ZERO_INITIAL_VECTOR .and. num_iter == 0, &
                'solve rejects a zero starting vector', failures)
     call valid_state%solve(s, v, x, lambda, &
                            100.0_wp * epsilon(1.0_wp), 0, 1, &
@@ -310,7 +316,7 @@ contains
     call complex_empty%solve(complex_s, complex_v, complex_x, lambda, &
                              100.0_wp * epsilon(1.0_wp), 20, 1, &
                              rel_acc, num_iter, info)
-    call check(info == QR_ERR_INVALID_ARGUMENT .and. num_iter == 0 .and. &
+    call check(info == QR_ERR_INVALID_STATE .and. num_iter == 0 .and. &
                all(abs(complex_x) <= 0.0_wp) .and. &
                abs(lambda) <= 0.0_wp, &
                'complex solve rejects an unfactorized state safely', failures)
@@ -327,10 +333,17 @@ contains
 
     call complex_valid%initialize(n, info)
     call complex_valid%factorize_fresh(complex_h, complex_s, 2.25_wp, info)
+    complex_short_s = cmplx(1.0_wp, 0.0_wp, kind=wp)
+    call complex_valid%solve(complex_short_s, complex_v, complex_x, lambda, &
+                             100.0_wp * epsilon(1.0_wp), 20, 1, &
+                             rel_acc, num_iter, info)
+    call check(info == QR_ERR_DIMENSION_MISMATCH .and. num_iter == 0, &
+               'complex solve distinguishes an incompatible overlap extent', &
+               failures)
     call complex_valid%solve(complex_s, complex_zero_v, complex_x, lambda, &
                              100.0_wp * epsilon(1.0_wp), 20, 1, &
                              rel_acc, num_iter, info)
-    call check(info == QR_ERR_INVALID_ARGUMENT .and. num_iter == 0, &
+    call check(info == QR_ERR_ZERO_INITIAL_VECTOR .and. num_iter == 0, &
                'complex solve rejects a zero starting vector', failures)
   end subroutine test_solve_error_paths
 

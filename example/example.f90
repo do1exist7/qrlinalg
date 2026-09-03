@@ -58,16 +58,18 @@ program qrlinalg_example
   call check_info('refactorize at new shift', info)
   call solve_and_print('after shift change', s, initial(1:2), x(1:2))
 
-  !DEALLOCATE releases the state and all of its private allocatable arrays.
-  deallocate(qr)
-
-  !A later lifetime may use a different capacity and another shift.
-  allocate(qr)
+  !CLEAR releases the private arrays while retaining the state object itself.
+  !The same object can then begin a new lifetime with a different capacity.
+  call qr%clear()
   call qr%initialize(capacity=2, info=info)
   call check_info('reinitialize', info)
   call qr%factorize_fresh(h, s, shift=0.5_wp, info=info)
   call check_info('factorize new state', info)
   call solve_and_print('new state', s, initial(1:2), x(1:2))
+
+  !CLEAR permits deterministic early release. DEALLOCATE would also release
+  !all allocatable components automatically if CLEAR were omitted here.
+  call qr%clear()
   deallocate(qr)
 
 contains

@@ -88,6 +88,25 @@ contains
                state%get_updates_since_fresh() == 0_int64, &
                'real reinitialization resets the complete queried lifetime', &
                failures)
+
+    call state%clear()
+    call check(.not. state%is_valid() .and. state%order() == 0 .and. &
+               state%get_capacity() == 0 .and. &
+               abs(state%get_shift()) <= tiny(1.0_wp) .and. &
+               state%get_update_count() == 0_int64 .and. &
+               state%get_updates_since_fresh() == 0_int64, &
+               'real clear restores the default public metadata', failures)
+    call state%clear()
+    call check(.not. state%is_valid() .and. state%get_capacity() == 0, &
+               'real clear is idempotent for an empty state', failures)
+
+    call state%initialize(2, info)
+    call state%factorize_fresh(h, s, -0.75_wp, info)
+    call check(info == QR_SUCCESS .and. state%is_valid() .and. &
+               state%order() == 2 .and. state%get_capacity() == 2 .and. &
+               abs(state%get_shift() + 0.75_wp) <= epsilon(1.0_wp), &
+               'real state can be initialized and factorized after clear', &
+               failures)
   end subroutine test_real_metadata
 
   ! Verify that the complex state exposes the same metadata semantics and that
@@ -134,6 +153,25 @@ contains
                state%get_update_count() == 0_int64 .and. &
                state%get_updates_since_fresh() == 0_int64, &
                'complex reinitialization resets queried metadata', failures)
+
+    call state%clear()
+    call check(.not. state%is_valid() .and. state%order() == 0 .and. &
+               state%get_capacity() == 0 .and. &
+               abs(state%get_shift()) <= tiny(1.0_wp) .and. &
+               state%get_update_count() == 0_int64 .and. &
+               state%get_updates_since_fresh() == 0_int64, &
+               'complex clear restores the default public metadata', failures)
+    call state%clear()
+    call check(.not. state%is_valid() .and. state%get_capacity() == 0, &
+               'complex clear is idempotent for an empty state', failures)
+
+    call state%initialize(2, info)
+    call state%factorize_fresh(h, s, 0.75_wp, info)
+    call check(info == QR_SUCCESS .and. state%is_valid() .and. &
+               state%order() == 2 .and. state%get_capacity() == 2 .and. &
+               abs(state%get_shift() - 0.75_wp) <= epsilon(1.0_wp), &
+               'complex state can be initialized and factorized after clear', &
+               failures)
   end subroutine test_complex_metadata
 
 end program test_metadata

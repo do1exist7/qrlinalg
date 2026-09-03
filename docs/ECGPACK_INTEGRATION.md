@@ -107,7 +107,11 @@ use qrlinalg, only: wp, qr_real_state, qr_complex_state, &
                     QR_SUCCESS, QR_ERR_INVALID_ARGUMENT, &
                     QR_ERR_ALLOCATION, QR_ERR_NOT_IMPLEMENTED, &
                     QR_ERR_FACTORIZATION, QR_ERR_SINGULAR, &
-                    QR_ERR_NO_CONVERGENCE
+                    QR_ERR_NO_CONVERGENCE, QR_ERR_INVALID_STATE, &
+                    QR_ERR_DIMENSION_MISMATCH, &
+                    QR_ERR_CAPACITY_EXCEEDED, &
+                    QR_ERR_ZERO_INITIAL_VECTOR, &
+                    QR_ERR_NONPOSITIVE_OVERLAP
 ```
 
 The public status values are:
@@ -115,12 +119,21 @@ The public status values are:
 | Symbol | Value | Meaning |
 |---|---:|---|
 | `QR_SUCCESS` | 0 | Operation completed successfully |
-| `QR_ERR_INVALID_ARGUMENT` | 1 | Invalid state, shape, index, capacity, normalization input, or other precondition |
+| `QR_ERR_INVALID_ARGUMENT` | 1 | Invalid scalar control, index, or mathematical input property |
 | `QR_ERR_ALLOCATION` | 2 | Initialization could not allocate all storage |
 | `QR_ERR_NOT_IMPLEMENTED` | 3 | Reserved for future API expansion |
 | `QR_ERR_FACTORIZATION` | 4 | LAPACK workspace query or factorization stage failed |
 | `QR_ERR_SINGULAR` | 5 | Shifted factorization or iteration is numerically unusable |
 | `QR_ERR_NO_CONVERGENCE` | 6 | Iteration limit reached; final approximation is still returned |
+| `QR_ERR_INVALID_STATE` | 7 | State is uninitialized, invalid, or missing required owned storage |
+| `QR_ERR_DIMENSION_MISMATCH` | 8 | Caller array extents are empty or incompatible |
+| `QR_ERR_CAPACITY_EXCEEDED` | 9 | Requested active order exceeds initialized capacity |
+| `QR_ERR_ZERO_INITIAL_VECTOR` | 10 | Starting vector is numerically zero in the working precision |
+| `QR_ERR_NONPOSITIVE_OVERLAP` | 11 | Final overlap norm is non-positive or numerically zero |
+
+Values `0:6` retain their existing assignments. ECGPACK should compare against
+symbols rather than integer literals and should include a default branch for
+future status values.
 
 Two independent concrete state types are provided:
 
@@ -133,6 +146,7 @@ Both expose the same type-bound method names:
 
 ```fortran
 call state%initialize(capacity, info)
+call state%clear()
 call state%factorize_fresh(H, S, shift, info)
 call state%replace_symmetric(idx, delta_h, delta_s, info)
 call state%append_symmetric(h_column, s_column, info)
@@ -174,6 +188,7 @@ initialize maximum capacity
   -> factorize physical H and S at one shift
   -> solve and/or perform structural updates
   -> factorize_fresh again when the shift changes or drift policy fires
+  -> clear when deterministic early release is required
   -> automatic scope cleanup or DEALLOCATE of an allocatable state object
 ```
 
@@ -186,6 +201,11 @@ Calling `initialize` again releases all existing state before allocating the
 new capacity. An allocation or workspace-query failure therefore leaves an
 empty state; it does not preserve the previous factorization.
 
+`clear()` releases every state-owned allocation and resets order, capacity,
+shift, validity, and both update counters. It is valid for an already empty
+state and returns no status. A cleared object remains a valid Fortran object
+and may be initialized again with a different capacity.
+
 `factorize_fresh` chooses the active order from the shapes of H and S. It
 reuses initialized storage, resets the state-internal updates-since-fresh
 counter, and does not allocate. A shift change is the dense change
@@ -194,7 +214,9 @@ row/column update to represent a shift change.
 
 Intrinsic deallocation of an allocatable state recursively releases all
 private allocatable components. A non-allocatable local state is cleaned up
-automatically when its scope ends. There is no explicit finalization method.
+automatically when its scope ends. `clear()` is therefore required only when a
+caller wants to release a long-lived state's storage before its own lifetime
+ends. There is no custom final procedure.
 
 ## Matrix storage contract
 
@@ -248,7 +270,9 @@ call state%factorize_fresh(H, S, shift, info)
 - Only their lower triangles are read; neither matrix is modified or retained.
 - On success, the state represents `H-shift*S=Q*R` and is ready to solve or
   update.
-- Invalid arguments preserve existing valid factors.
+- Invalid state, dimension mismatch, capacity exceeded, and invalid
+  mathematical input are reported separately and preserve existing valid
+  factors.
 - A LAPACK failure happens after factor storage is overwritten and leaves the
   state invalid and without an active order.
 
@@ -299,6 +323,9 @@ clustered eigenvalues may return an invariant-subspace vector or
 num_iter describe the final approximation. Errors detected before iteration
 return zero x and lambda, zero iterations, and huge rel_acc. The state itself
 is unchanged by every solve result.
+`QR_ERR_ZERO_INITIAL_VECTOR` is detected before iteration, whereas
+`QR_ERR_NONPOSITIVE_OVERLAP` is detected after an iterate is formed and can
+therefore return `num_iter>0`.
 
 ### `replace_symmetric`
 
@@ -313,7 +340,10 @@ call state%replace_symmetric(idx, delta_h, delta_s, info)
   symmetric/Hermitian row without double-counting the diagonal.
 - Complex represented diagonal change must be real within a precision-scaled
   tolerance.
-- Invalid calls leave the complete state unchanged.
+- Invalid state, vector extent, and index or complex-diagonal errors return
+  `QR_ERR_INVALID_STATE`, `QR_ERR_DIMENSION_MISMATCH`, and
+  `QR_ERR_INVALID_ARGUMENT`, respectively. Every rejected call leaves the
+  complete state unchanged.
 
 When ECGPACK stores only the complex lower triangle, construct a conceptual
 column delta as follows:
@@ -339,6 +369,10 @@ call state%append_symmetric(h_column, s_column, info)
 - Both columns have length `n+1`.
 - Elements `1:n` are the conceptual new columns `H(1:n,n+1)` and
   `S(1:n,n+1)`; element `n+1` is the new diagonal.
+- Invalid state, exhausted capacity, and incorrect column extent return
+  `QR_ERR_INVALID_STATE`, `QR_ERR_CAPACITY_EXCEEDED`, and
+  `QR_ERR_DIMENSION_MISMATCH`, respectively. A non-real complex diagonal
+  returns `QR_ERR_INVALID_ARGUMENT`.
 - Complex H and S diagonals are validated separately as real.
 - Success increases the active order by one; rejection preserves all state.
 
@@ -366,7 +400,9 @@ call state%delete_symmetric(idx, info)
 - Success decreases the active order by one.
 - Deletion from order one is rejected because qrlinalg has no valid order-zero
   factorization.
-- Invalid indices and invalid states leave the complete state unchanged.
+- Invalid indices or order-one deletion return `QR_ERR_INVALID_ARGUMENT`; an
+  invalid state returns `QR_ERR_INVALID_STATE`. Both leave the complete state
+  unchanged.
 
 After success, delete the same principal row and column from ECGPACK's H and S
 storage. The new active order is available from `state%order()`.

@@ -34,6 +34,8 @@ contains
     real(wp) :: m(n,n), identity(n,n), expected_abs_q(n,n)
     real(wp) :: q_before(capacity,capacity), r_before(capacity,capacity)
     real(wp) :: bad_h(2,3), bad_s(2,2)
+    real(wp) :: too_large_h(capacity+1,capacity+1)
+    real(wp) :: too_large_s(capacity+1,capacity+1)
     real(wp) :: residual, orthogonality, q_error, r_error, tolerance
     integer :: info
 
@@ -101,12 +103,21 @@ contains
     bad_h = 0.0_wp
     bad_s = 0.0_wp
     call state%factorize_fresh(bad_h, bad_s, shift, info)
-    call check(info == QR_ERR_INVALID_ARGUMENT, &
+    call check(info == QR_ERR_DIMENSION_MISMATCH, &
                'real factorization rejects nonsquare H', failures)
     call check(state%valid .and. state%n == n .and. &
                all(abs(state%q - q_before) <= 0.0_wp) .and. &
                all(abs(state%r - r_before) <= 0.0_wp), &
                'invalid real request preserves existing factors', failures)
+
+    too_large_h = 0.0_wp
+    too_large_s = 0.0_wp
+    call state%factorize_fresh(too_large_h, too_large_s, shift, info)
+    call check(info == QR_ERR_CAPACITY_EXCEEDED .and. state%valid .and. &
+               state%n == n .and. &
+               all(abs(state%q - q_before) <= 0.0_wp) .and. &
+               all(abs(state%r - r_before) <= 0.0_wp), &
+               'real factorization reports capacity without mutation', failures)
 
     write(*,'(a,i0,2(a,es12.4))') '  real wp=', wp, &
       ' residual=', residual, ' orthogonality=', orthogonality
@@ -133,6 +144,8 @@ contains
     complex(wp) :: invalid_diagonal_h(n,n), invalid_diagonal_s(n,n)
     complex(wp) :: q_before(capacity,capacity), r_before(capacity,capacity)
     complex(wp) :: bad_h(2,3), bad_s(2,2)
+    complex(wp) :: too_large_h(capacity+1,capacity+1)
+    complex(wp) :: too_large_s(capacity+1,capacity+1)
     integer :: info
 
     tolerance = 1000.0_wp * epsilon(1.0_wp)
@@ -207,12 +220,22 @@ contains
     bad_h = cmplx(0.0_wp, 0.0_wp, kind=wp)
     bad_s = cmplx(0.0_wp, 0.0_wp, kind=wp)
     call state%factorize_fresh(bad_h, bad_s, shift, info)
-    call check(info == QR_ERR_INVALID_ARGUMENT, &
+    call check(info == QR_ERR_DIMENSION_MISMATCH, &
                'complex factorization rejects nonsquare H', failures)
     call check(state%valid .and. state%n == n .and. &
                all(abs(state%q - q_before) <= 0.0_wp) .and. &
                all(abs(state%r - r_before) <= 0.0_wp), &
                'invalid complex request preserves existing factors', failures)
+
+    too_large_h = cmplx(0.0_wp, 0.0_wp, kind=wp)
+    too_large_s = cmplx(0.0_wp, 0.0_wp, kind=wp)
+    call state%factorize_fresh(too_large_h, too_large_s, shift, info)
+    call check(info == QR_ERR_CAPACITY_EXCEEDED .and. state%valid .and. &
+               state%n == n .and. &
+               all(abs(state%q - q_before) <= 0.0_wp) .and. &
+               all(abs(state%r - r_before) <= 0.0_wp), &
+               'complex factorization reports capacity without mutation', &
+               failures)
 
     !A Hermitian diagonal is real. Reject a physical matrix that violates this
     !condition before overwriting the previously valid factorization.

@@ -154,7 +154,7 @@ contains
                state%updates_since_fresh == 2 + successful_updates, &
                'real order-one deletion is rejected without mutation', failures)
     call empty_state%delete_symmetric(1, info)
-    call check(info == QR_ERR_INVALID_ARGUMENT, &
+    call check(info == QR_ERR_INVALID_STATE, &
                'real deletion rejects an unfactorized state', failures)
 
     write(*,'(a,i0,2(a,es12.4))') '  real deletion wp=', wp, &
@@ -299,7 +299,7 @@ contains
                'complex order-one deletion is rejected without mutation', &
                failures)
     call empty_state%delete_symmetric(1, info)
-    call check(info == QR_ERR_INVALID_ARGUMENT, &
+    call check(info == QR_ERR_INVALID_STATE, &
                'complex deletion rejects an unfactorized state', failures)
 
     write(*,'(a,i0,2(a,es12.4))') '  complex deletion wp=', wp, &
