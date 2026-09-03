@@ -139,17 +139,27 @@ call state%append_symmetric(h_column, s_column, info)
 call state%delete_symmetric(idx, info)
 call state%solve(S, v_initial, x, lambda, tol, max_iter, norm_mode, &
                  rel_acc, num_iter, info)
+
+valid = state%is_valid()
+n = state%order()
+capacity = state%get_capacity()
+shift = state%get_shift()
+total_updates = state%get_update_count()
+updates_since_fresh = state%get_updates_since_fresh()
 ```
 
 There is no public base type or runtime real/complex dispatch. ECGPACK should
 select the concrete type at the same point where it currently selects
 `GSEPIIS` or `GHEPIIS`.
 
-State components are private. Production callers cannot inspect `Q`, `R`,
-active order, shift, validity, capacity, or update counters. ECGPACK must track
-its own active order, capacity, shift, and refactorization counter. Do not use
-test preprocessing to bypass this boundary. If factor access is genuinely
-required, add a reviewed public API instead.
+State components are private. Production callers cannot inspect `Q`, `R`, or
+workspace, but the type-bound queries above expose lifecycle metadata without
+allowing mutation. ECGPACK should use them as the authoritative description of
+the QR state instead of duplicating order, capacity, shift, validity, or update
+counters. `get_shift()` is meaningful as a represented shift only while
+`is_valid()` is true. Do not use test preprocessing to bypass the private
+factor-storage boundary. If factor access is genuinely required, add a
+separately reviewed public API.
 
 Avoid intrinsic assignment between populated states: allocatable component
 assignment would deep-copy both dense factors and all workspaces. Pass the
@@ -359,7 +369,7 @@ call state%delete_symmetric(idx, info)
 - Invalid indices and invalid states leave the complete state unchanged.
 
 After success, delete the same principal row and column from ECGPACK's H and S
-storage and update the externally tracked active order.
+storage. The new active order is available from `state%order()`.
 
 ## Mapping from `GSEPIIS` and `GHEPIIS`
 
@@ -417,8 +427,8 @@ phase alignment. The complex direction coefficient intentionally uses
 
 ## Minimal owning context
 
-ECGPACK should keep qrlinalg state together with caller-visible metadata. A
-representative real integration is:
+ECGPACK can keep qrlinalg state in its solver context without duplicating the
+metadata owned by that state. A representative real integration is:
 
 ```fortran
 module ecgpack_qr_backend
@@ -427,11 +437,6 @@ module ecgpack_qr_backend
 
   type :: ecgpack_real_qr_context
     type(qr_real_state) :: factors
-    integer :: active_n = 0
-    integer :: capacity = 0
-    integer :: updates_since_fresh = 0
-    real(wp) :: shift = 0.0_wp
-    logical :: ready = .false.
   end type ecgpack_real_qr_context
 
 contains
@@ -442,23 +447,18 @@ contains
     integer, intent(in) :: capacity
     integer, intent(out) :: info
 
-    context%ready = .false.
     call context%factors%initialize(capacity, info)
     if (info /= QR_SUCCESS) return
     call context%factors%factorize_fresh(H, S, shift, info)
-    if (info /= QR_SUCCESS) return
-    context%active_n = size(H,1)
-    context%capacity = capacity
-    context%updates_since_fresh = 0
-    context%shift = shift
-    context%ready = .true.
   end subroutine prepare_context
 end module ecgpack_qr_backend
 ```
 
 Production code should separate initialization from refactorization so an
 already allocated context can reuse its capacity when only the shift changes.
-The example above combines them only to show state ownership.
+The example above combines them only to show state ownership. Subsequent code
+can test `context%factors%is_valid()` and read the remaining metadata directly
+from the state.
 
 ## Update drift and refactorization policy
 
@@ -533,9 +533,9 @@ Before enabling the QR backend in ECGPACK:
    solve, replacement, append, deletion, fresh factorization at a new shift,
    and cleanup.
 8. Confirm every successful structural state change is mirrored exactly once
-   in ECGPACK's physical H/S storage and external active order.
-9. Confirm rejected operations leave ECGPACK's matrices and external metadata
-   synchronized with the unchanged qrlinalg state.
+   in ECGPACK's physical H/S storage and in the queried qrlinalg metadata.
+9. Confirm rejected operations leave ECGPACK's matrices synchronized with the
+   unchanged qrlinalg state and its queried metadata.
 10. Test an iteration-limit result and retain its usable eigenpair when
     `info==QR_ERR_NO_CONVERGENCE`.
 11. Test a singular shift and ensure ECGPACK handles `QR_ERR_SINGULAR` without

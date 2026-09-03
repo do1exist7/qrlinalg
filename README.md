@@ -147,10 +147,13 @@ individual executable can be rerun directly, for example:
 ./build/test-wp8/test_replacement
 ```
 
-The nine independently reported executables cover:
+The ten independently reported executables cover:
 
-- `test_initialization`: invalid initialization, state metadata, and every
-  state-owned workspace extent;
+- `test_initialization`: invalid initialization, internal state metadata, and
+  every state-owned workspace extent;
+- `test_metadata`: public real and complex metadata queries across
+  initialization, factorization, structural updates, rejected operations, and
+  reinitialization;
 - `test_factorization`: real and complex analytical QR reconstruction,
   orthogonality/unitarity, triangularity, caller ownership, and rejected-call
   state preservation;
@@ -300,6 +303,24 @@ Each state privately owns:
 - active dimension, capacity, represented shift, and factor-validity state;
 - lifetime structural-update and updates-since-fresh counters.
 
+The numerical storage remains private, but both state types provide read-only
+queries for the lifecycle metadata:
+
+```fortran
+state%is_valid()                 ! logical
+state%order()                    ! integer
+state%get_capacity()             ! integer
+state%get_shift()                ! real(wp)
+state%get_update_count()         ! integer(int64)
+state%get_updates_since_fresh()  ! integer(int64)
+```
+
+`get_update_count()` is the lifetime number of successful replacement,
+append, and deletion operations. A fresh factorization preserves it while
+resetting `get_updates_since_fresh()` to zero. Reinitialization resets both.
+The shift returned by `get_shift()` is represented by Q and R only when
+`is_valid()` is true; callers must check validity before using it.
+
 The complex state also owns real workspace required by complex rotations.
 Initialization queries both LAPACK factorization stages at the maximum basis
 size and allocates the larger recommended workspace. All storage is therefore
@@ -399,6 +420,11 @@ call qr%delete_symmetric(idx, info)
 call qr%solve(S, v_initial, x, lambda, tol, max_iter, norm_mode, &
               rel_acc, num_iter, info)
 ```
+
+They also expose the metadata-query methods shown in the state-and-ownership
+section. These pure queries neither allocate storage nor modify factors or
+workspace, and allow an application to implement its refresh policy without
+duplicating the QR state's order, capacity, shift, validity, or counters.
 
 `replace_symmetric` applies the physical column changes `delta_h` and `delta_s`
 at the existing shift without retaining either vector. It preserves the active

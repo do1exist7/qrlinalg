@@ -191,6 +191,12 @@ module qrlinalg
     procedure :: append_symmetric => real_append_symmetric
     procedure :: delete_symmetric => real_delete_symmetric
     procedure :: solve => real_solve
+    procedure :: is_valid => real_is_valid
+    procedure :: order => real_order
+    procedure :: get_capacity => real_get_capacity
+    procedure :: get_shift => real_get_shift
+    procedure :: get_update_count => real_get_update_count
+    procedure :: get_updates_since_fresh => real_get_updates_since_fresh
   end type qr_real_state
 
   type, public :: qr_complex_state
@@ -224,6 +230,12 @@ module qrlinalg
     procedure :: append_symmetric => complex_append_symmetric
     procedure :: delete_symmetric => complex_delete_symmetric
     procedure :: solve => complex_solve
+    procedure :: is_valid => complex_is_valid
+    procedure :: order => complex_order
+    procedure :: get_capacity => complex_get_capacity
+    procedure :: get_shift => complex_get_shift
+    procedure :: get_update_count => complex_get_update_count
+    procedure :: get_updates_since_fresh => complex_get_updates_since_fresh
   end type qr_complex_state
 
 contains
@@ -1687,6 +1699,236 @@ contains
       x = x / cmplx(sqrt(eigenvector_norm_squared), 0.0_wp, kind=wp)
     end select
   end subroutine complex_solve
+
+  pure function real_is_valid(self) result(factors_are_valid)
+  !Function real_is_valid reports whether a real state contains a complete QR
+  !factorization that may be used by solve and the structural-update methods.
+  !Initialization alone reserves storage but does not make the state valid.
+  !The result becomes true only after factorize_fresh succeeds and remains true
+  !across successful or rejected structural updates. A factorization failure
+  !after numerical storage has been overwritten makes the result false.
+  !
+  !  Input parameter:
+  !    self - Real QR state whose factorization validity is queried. The state
+  !           and its internal workspace are not modified.
+  !
+  !  Result:
+  !    factors_are_valid - True when the active Q and R factors are complete
+  !                        and usable as a represented state; false otherwise.
+    class(qr_real_state), intent(in) :: self
+    logical :: factors_are_valid
+
+    factors_are_valid = self%valid
+  end function real_is_valid
+
+  pure function complex_is_valid(self) result(factors_are_valid)
+  !Function complex_is_valid reports whether a complex state contains a
+  !complete QR factorization that may be used by solve and the Hermitian
+  !structural-update methods. Its lifecycle semantics are identical to
+  !real_is_valid. The query performs no allocation and does not modify self.
+  !
+  !  Input parameter:
+  !    self - Complex QR state whose factorization validity is queried.
+  !
+  !  Result:
+  !    factors_are_valid - True only when the active unitary Q and triangular R
+  !                        constitute a valid represented factorization.
+    class(qr_complex_state), intent(in) :: self
+    logical :: factors_are_valid
+
+    factors_are_valid = self%valid
+  end function complex_is_valid
+
+  pure function real_order(self) result(active_order)
+  !Function real_order returns the active matrix order represented by a real
+  !QR state. The result is zero before the first successful factorization,
+  !after reinitialization, and after a numerical failure invalidates factors.
+  !Successful append and deletion operations respectively increase and
+  !decrease the result; replacement leaves it unchanged.
+  !
+  !  Input parameter:
+  !    self - Real QR state whose active order is queried. It is not modified.
+  !
+  !  Result:
+  !    active_order - Order of the represented factors, or zero when no valid
+  !                   active factorization exists.
+    class(qr_real_state), intent(in) :: self
+    integer :: active_order
+
+    active_order = self%n
+  end function real_order
+
+  pure function complex_order(self) result(active_order)
+  !Function complex_order returns the active matrix order represented by a
+  !complex QR state. The result follows the same initialization,
+  !factorization, append, replacement, deletion, and invalidation rules as
+  !real_order. The query performs no allocation and does not modify self.
+  !
+  !  Input parameter:
+  !    self - Complex QR state whose active order is queried.
+  !
+  !  Result:
+  !    active_order - Order of the represented factors, or zero when no valid
+  !                   active factorization exists.
+    class(qr_complex_state), intent(in) :: self
+    integer :: active_order
+
+    active_order = self%n
+  end function complex_order
+
+  pure function real_get_capacity(self) result(allocated_capacity)
+  !Function real_get_capacity returns the largest matrix order supported by
+  !the storage currently owned by a real QR state. Capacity is independent of
+  !the active order and remains available after factorization and structural
+  !updates. The result is zero for a default state and after failed or invalid
+  !initialization has returned the state to its empty condition.
+  !
+  !  Input parameter:
+  !    self - Real QR state whose allocated capacity is queried.
+  !
+  !  Result:
+  !    allocated_capacity - Maximum order accepted without reinitialization,
+  !                         or zero when the state owns no operating storage.
+    class(qr_real_state), intent(in) :: self
+    integer :: allocated_capacity
+
+    allocated_capacity = self%capacity
+  end function real_get_capacity
+
+  pure function complex_get_capacity(self) result(allocated_capacity)
+  !Function complex_get_capacity returns the largest matrix order supported by
+  !the storage currently owned by a complex QR state. Its meaning and lifecycle
+  !are identical to real_get_capacity. The query performs no allocation and
+  !does not modify any complex or real workspace owned by self.
+  !
+  !  Input parameter:
+  !    self - Complex QR state whose allocated capacity is queried.
+  !
+  !  Result:
+  !    allocated_capacity - Maximum order accepted without reinitialization,
+  !                         or zero when the state owns no operating storage.
+    class(qr_complex_state), intent(in) :: self
+    integer :: allocated_capacity
+
+    allocated_capacity = self%capacity
+  end function complex_get_capacity
+
+  pure function real_get_shift(self) result(represented_shift)
+  !Function real_get_shift returns the shift stored by a real QR state. When
+  !is_valid() is true, the returned value is the sigma in
+  !
+  !                         H - sigma*S = Q*R .
+  !
+  !Before a successful factorization the stored value is zero. If is_valid()
+  !is false after a numerical factorization failure, no shift is represented
+  !and the returned stored value must not be used as factorization metadata.
+  !A caller requiring an authoritative shift must first test is_valid().
+  !
+  !  Input parameter:
+  !    self - Real QR state whose stored shift is queried. It is not modified.
+  !
+  !  Result:
+  !    represented_shift - Stored real shift in the compile-time working kind.
+    class(qr_real_state), intent(in) :: self
+    real(wp) :: represented_shift
+
+    represented_shift = self%shift
+  end function real_get_shift
+
+  pure function complex_get_shift(self) result(represented_shift)
+  !Function complex_get_shift returns the real shift stored by a complex QR
+  !state. When is_valid() is true, Q and R represent H-sigma*S at this shift,
+  !where the matrices and factors are complex but the generalized Hermitian
+  !eigenvalue and shift are real. As for real_get_shift, the result is not
+  !factorization metadata while is_valid() is false.
+  !
+  !  Input parameter:
+  !    self - Complex QR state whose stored real shift is queried.
+  !
+  !  Result:
+  !    represented_shift - Stored real shift in the compile-time working kind.
+    class(qr_complex_state), intent(in) :: self
+    real(wp) :: represented_shift
+
+    represented_shift = self%shift
+  end function complex_get_shift
+
+  pure function real_get_update_count(self) result(update_count)
+  !Function real_get_update_count returns the lifetime number of successful
+  !replace_symmetric, append_symmetric, and delete_symmetric calls recorded by
+  !a real state. Each complete public structural operation contributes one,
+  !irrespective of the number of internal QR rank-one operations. Rejected
+  !operations and fresh factorizations do not increase the result.
+  !Reinitialization starts a new state lifetime and resets the count to zero.
+  !
+  !  Input parameter:
+  !    self - Real QR state whose lifetime update count is queried.
+  !
+  !  Result:
+  !    update_count - Successful structural operations in the current state
+  !                   lifetime, returned as a 64-bit integer.
+    class(qr_real_state), intent(in) :: self
+    integer(int64) :: update_count
+
+    update_count = self%structural_updates
+  end function real_get_update_count
+
+  pure function complex_get_update_count(self) result(update_count)
+  !Function complex_get_update_count returns the lifetime number of successful
+  !Hermitian replacement, append, and deletion operations recorded by a
+  !complex state. Counting and reset semantics are identical to
+  !real_get_update_count. The query does not modify factors or workspace.
+  !
+  !  Input parameter:
+  !    self - Complex QR state whose lifetime update count is queried.
+  !
+  !  Result:
+  !    update_count - Successful structural operations in the current state
+  !                   lifetime, returned as a 64-bit integer.
+    class(qr_complex_state), intent(in) :: self
+    integer(int64) :: update_count
+
+    update_count = self%structural_updates
+  end function complex_get_update_count
+
+  pure function real_get_updates_since_fresh(self) result(update_count)
+  !Function real_get_updates_since_fresh returns the number of successful
+  !structural operations applied after the most recent successful fresh QR
+  !factorization. A successful factorize_fresh resets this count to zero while
+  !preserving the lifetime count returned by get_update_count(). Applications
+  !may use this value as one input to an external refactorization policy; the
+  !library does not impose a numerical-drift threshold itself.
+  !
+  !  Input parameter:
+  !    self - Real QR state whose refresh counter is queried.
+  !
+  !  Result:
+  !    update_count - Successful structural updates since fresh factorization,
+  !                   returned as a 64-bit integer.
+    class(qr_real_state), intent(in) :: self
+    integer(int64) :: update_count
+
+    update_count = self%updates_since_fresh
+  end function real_get_updates_since_fresh
+
+  pure function complex_get_updates_since_fresh(self) result(update_count)
+  !Function complex_get_updates_since_fresh returns the number of successful
+  !Hermitian structural operations applied after the most recent successful
+  !fresh QR factorization. The reset, rejection, and application-policy
+  !semantics are identical to real_get_updates_since_fresh. The query performs
+  !no allocation and does not modify self.
+  !
+  !  Input parameter:
+  !    self - Complex QR state whose refresh counter is queried.
+  !
+  !  Result:
+  !    update_count - Successful structural updates since fresh factorization,
+  !                   returned as a 64-bit integer.
+    class(qr_complex_state), intent(in) :: self
+    integer(int64) :: update_count
+
+    update_count = self%updates_since_fresh
+  end function complex_get_updates_since_fresh
 
   function real_norm_squared(n, x) result(norm_squared)
   !Function real_norm_squared computes the real Euclidean inner product

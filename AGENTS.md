@@ -36,6 +36,19 @@ The following operations are implemented for both `qr_real_state` and
 - `solve(S, v_initial, x, lambda, tol, max_iter, norm_mode, rel_acc, num_iter,
   info)`.
 
+Both state types also expose the same pure read-only metadata queries:
+
+- `is_valid()`;
+- `order()`;
+- `get_capacity()`;
+- `get_shift()`;
+- `get_update_count()`;
+- `get_updates_since_fresh()`.
+
+`get_shift()` describes the represented shift only when `is_valid()` is true.
+The update-query results have kind `int64`; fresh factorization resets only
+the updates-since-fresh count, while initialization resets both counters.
+
 Deletion from an order-one factorization is invalid because the library does
 not represent a valid order-zero factorization. Rejected structural operations
 leave factors, dimensions, validity, shifts, and counters unchanged.
@@ -53,6 +66,8 @@ leave factors, dimensions, validity, shifts, and counters unchanged.
   `test/test_delete.f90`, and
   `test/test_inverse_iteration.f90` contain white-box state-contract and
   analytical numerical tests grouped by behavior.
+- `test/test_metadata.f90` verifies the public real and complex metadata
+  queries across the complete state lifecycle without accessing components.
 - `test/test_inverse_iteration_failures.f90` contains analytical tests for
   degenerate, clustered, oscillatory, singular, and precondition-violating
   inverse-iteration regimes.
