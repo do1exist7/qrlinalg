@@ -332,6 +332,12 @@ indices, and mathematical input properties. Distinguish invalid state, caller
 array extents, exhausted capacity, a numerically zero initial vector, and a
 non-positive overlap quadratic form with their dedicated codes.
 
+The pure module function `qr_status_message(info)` returns the stable
+human-readable description of a known status and a defined fallback for an
+unknown integer. It performs no allocation or I/O. Caller control flow must use
+the integer symbols; classifying conditions as fatal or retryable remains
+caller policy.
+
 Recoverable library errors return through `info`. Do not use `error stop`,
 `stop`, or process termination in library routines.
 
@@ -475,7 +481,8 @@ The permanent tests must continue to cover:
 - iteration-limit nonconvergence with a usable returned approximation;
 - singular factors, zero starting vectors, and invalid state errors;
 - stable public status values and distinct state, dimension, capacity,
-  zero-start, and non-positive-overlap failures;
+  zero-start, and non-positive-overlap failures, including exact status
+  descriptions and the unknown-code fallback;
 - exact degeneracy, equidistant shifts, missing target components, slowly
   converging clusters, indefinite overlap matrices, and roundoff-scale starts.
 

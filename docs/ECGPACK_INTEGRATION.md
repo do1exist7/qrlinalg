@@ -111,7 +111,7 @@ use qrlinalg, only: wp, qr_real_state, qr_complex_state, &
                     QR_ERR_DIMENSION_MISMATCH, &
                     QR_ERR_CAPACITY_EXCEEDED, &
                     QR_ERR_ZERO_INITIAL_VECTOR, &
-                    QR_ERR_NONPOSITIVE_OVERLAP
+                    QR_ERR_NONPOSITIVE_OVERLAP, qr_status_message
 ```
 
 The public status values are:
@@ -134,6 +134,19 @@ The public status values are:
 Values `0:6` retain their existing assignments. ECGPACK should compare against
 symbols rather than integer literals and should include a default branch for
 future status values.
+
+`qr_status_message(info)` is a pure, allocation-free module function that
+returns a fixed-length, blank-padded description for diagnostics. For example:
+
+```fortran
+if (info /= QR_SUCCESS) then
+  write(*,'(a)') trim(qr_status_message(info))
+end if
+```
+
+Unknown integers have a stable fallback description. ECGPACK should use the
+integer symbols for control flow and treat the returned text as descriptive;
+the library does not decide whether a status is fatal or retryable.
 
 Two independent concrete state types are provided:
 

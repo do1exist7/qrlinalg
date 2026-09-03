@@ -404,6 +404,18 @@ reported as `QR_ERR_INVALID_ARGUMENT` in earlier releases:
 | `QR_ERR_ZERO_INITIAL_VECTOR` | 10 | Inverse-iteration starting vector is numerically zero |
 | `QR_ERR_NONPOSITIVE_OVERLAP` | 11 | Final overlap quadratic form is non-positive or numerically zero |
 
+The pure module function `qr_status_message(info)` converts any known status
+to a stable, human-readable description without allocation or I/O. Its result
+is fixed-length and blank-padded, so use `trim` when printing it:
+
+```fortran
+if (info /= QR_SUCCESS) write(*,'(a)') trim(qr_status_message(info))
+```
+
+An unknown integer produces `unrecognized qrlinalg status code`. Branch on the
+integer symbols rather than parsing these descriptions; retry and termination
+policy belongs to the caller.
+
 `initialize(capacity, info)` reserves storage for matrices up to `capacity`,
 leaves the active order at zero until `factorize_fresh`, and returns
 `QR_SUCCESS`, `QR_ERR_INVALID_ARGUMENT`, or

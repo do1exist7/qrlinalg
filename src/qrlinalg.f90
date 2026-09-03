@@ -52,10 +52,13 @@ module qrlinalg
     !The supplied inverse-iteration starting vector is numerically zero.
   integer, parameter, public :: QR_ERR_NONPOSITIVE_OVERLAP = 11
     !The final vector has a non-positive or numerically zero overlap norm.
+  integer, parameter :: QR_STATUS_MESSAGE_LENGTH = 96
+    !Fixed result length used by qr_status_message; returned text is padded.
 
   public :: wp
   public :: qr_real_state
   public :: qr_complex_state
+  public :: qr_status_message
 
   !Interfaces to the external BLAS and LAPACK routines supplied in
   !src/qrupdate. Explicit interfaces allow the compiler to verify argument
@@ -251,6 +254,58 @@ module qrlinalg
   end type qr_complex_state
 
 contains
+
+  pure function qr_status_message(info) result(message)
+  !Function qr_status_message returns a stable, human-readable description of
+  !a public qrlinalg status value. The result describes the library condition
+  !only; it does not classify the condition as fatal, retryable, or otherwise
+  !impose caller error-handling policy.
+  !
+  !  Input parameter:
+  !    info - Integer status returned by a qrlinalg operation or another
+  !           integer that is to be interpreted as a qrlinalg status.
+  !
+  !  Result:
+  !    message - Blank-padded status description with fixed length
+  !              QR_STATUS_MESSAGE_LENGTH. Callers normally use TRIM(message)
+  !              when writing or composing diagnostics. An unrecognized value
+  !              returns a stable fallback description rather than failing.
+  !
+  !The function performs no allocation or input/output, changes no state, and
+  !is safe to call from pure procedures. Programs must continue to branch on
+  !the integer status symbols rather than parse the descriptive text.
+    integer, intent(in) :: info
+    character(len=QR_STATUS_MESSAGE_LENGTH) :: message
+
+    select case (info)
+    case (QR_SUCCESS)
+      message = 'operation completed successfully'
+    case (QR_ERR_INVALID_ARGUMENT)
+      message = 'invalid scalar control, index, or mathematical input property'
+    case (QR_ERR_ALLOCATION)
+      message = 'state storage allocation failed'
+    case (QR_ERR_NOT_IMPLEMENTED)
+      message = 'requested numerical operation is not implemented'
+    case (QR_ERR_FACTORIZATION)
+      message = 'LAPACK workspace query or QR factorization failed'
+    case (QR_ERR_SINGULAR)
+      message = 'shifted factorization or generated iterate is numerically unusable'
+    case (QR_ERR_NO_CONVERGENCE)
+      message = 'inverse iteration did not converge within max_iter; approximation is available'
+    case (QR_ERR_INVALID_STATE)
+      message = 'QR state is uninitialized, invalid, or missing owned storage'
+    case (QR_ERR_DIMENSION_MISMATCH)
+      message = 'caller array extents are empty or incompatible'
+    case (QR_ERR_CAPACITY_EXCEEDED)
+      message = 'requested active order exceeds initialized capacity'
+    case (QR_ERR_ZERO_INITIAL_VECTOR)
+      message = 'inverse-iteration starting vector is numerically zero'
+    case (QR_ERR_NONPOSITIVE_OVERLAP)
+      message = 'overlap quadratic form is non-positive or numerically zero'
+    case default
+      message = 'unrecognized qrlinalg status code'
+    end select
+  end function qr_status_message
 
   subroutine clear_real_state(self)
   !Subroutine clear_real_state releases every allocation owned by a real QR

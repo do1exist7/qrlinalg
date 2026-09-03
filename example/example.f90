@@ -1,6 +1,6 @@
 !A compact example of the complete qrlinalg state lifecycle.
 program qrlinalg_example
-  use qrlinalg, only: QR_SUCCESS, qr_real_state, wp
+  use qrlinalg, only: QR_SUCCESS, qr_real_state, qr_status_message, wp
   implicit none
 
   type(qr_real_state), allocatable :: qr
@@ -96,7 +96,8 @@ contains
     integer, intent(in) :: status
 
     if (status /= QR_SUCCESS) then
-      write(*,'(a,a,a,i0)') 'ERROR: ', trim(operation), ', info=', status
+      write(*,'(a,a,a,i0,a,a)') 'ERROR: ', trim(operation), ', info=', status, &
+                                ': ', trim(qr_status_message(status))
       error stop 1
     end if
   end subroutine check_info
