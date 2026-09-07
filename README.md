@@ -147,7 +147,7 @@ individual executable can be rerun directly, for example:
 ./build/test-wp8/test_replacement
 ```
 
-The eleven independently reported executables cover:
+The twelve independently reported executables cover:
 
 - `test_initialization`: invalid initialization, internal state metadata, and
   every state-owned workspace extent;
@@ -158,6 +158,10 @@ The eleven independently reported executables cover:
 - `test_factorization`: real and complex analytical QR reconstruction,
   orthogonality/unitarity, triangularity, caller ownership, and rejected-call
   state preservation;
+- `test_factorization_residual`: capacity-sized leading dimensions, inactive
+  NaN sentinels, real and complex action residuals across fresh factorization,
+  replacement, append, deletion, repeated updates, deliberate mismatch, and
+  validation failures;
 - `test_dgemm`: every real transpose spelling, scalar edge cases, rectangular
   optimized paths and tails, padded leading dimensions, large OpenMP paths,
   output-padding preservation, and `beta=0` handling without reading `C`;
@@ -435,14 +439,30 @@ tolerance. It allocates nothing and does not retain H or S. It returns
 `QR_ERR_CAPACITY_EXCEEDED`, `QR_ERR_INVALID_ARGUMENT`, or
 `QR_ERR_FACTORIZATION`.
 
+The backward-compatible optional form
+`factorize_fresh(H, S, shift, info, active_order=n)` uses only the leading
+`n`-by-`n` principal blocks. H and S may retain capacity-sized physical
+storage; each must have at least `n` rows and columns. Without `active_order`,
+the original equal, square, nonempty shape rules remain in force.
+
 `solve(S, v_initial, ...)` implements the mathematical iteration and stopping
 rules of the pristine `GSEPIIS`/`GHEPIIS` routines through the stored QR
 factors. A positive tolerance stops at the requested direction-change estimate;
 a negative tolerance continues until that estimate begins to worsen, while
 still requiring accuracy `abs(tol)`. Normalization mode 0 produces unit S norm,
 mode 1 produces unit Euclidean norm, and any other value retains unit-largest-
-component scaling. The routine allocates nothing and leaves S and the initial
-vector unchanged.
+component scaling. S may be larger than the active order in either dimension;
+the routine uses its physical first extent as the BLAS leading dimension and
+reads only the leading active lower triangle. It allocates nothing and leaves
+S and the initial vector unchanged.
+
+`factorization_residual(H, S, v, absolute_residual, relative_residual, info)`
+compares `(H-shift*S)*v` with `Q*(R*v)` for a nonzero active-order probe vector.
+It accepts capacity-sized H and S, reads only their leading active lower
+triangles, and reuses state-owned workspace without allocation. The relative
+result divides the difference norm by the sum of both action norms plus
+`tiny(1.0_wp)`. The routine only reports drift; callers decide whether and when
+to invoke `factorize_fresh`.
 
 Successful solves return `QR_SUCCESS`. Invalid state, incompatible extents,
 non-positive iteration limit, zero starting vector, and non-positive overlap
@@ -457,11 +477,14 @@ Both state types expose the same numerical method names:
 call qr%initialize(capacity, info)
 call qr%clear()
 call qr%factorize_fresh(H, S, shift, info)
+call qr%factorize_fresh(H_capacity, S_capacity, shift, info, active_order=n)
 call qr%replace_symmetric(idx, delta_h, delta_s, info)
 call qr%append_symmetric(h_column, s_column, info)
 call qr%delete_symmetric(idx, info)
 call qr%solve(S, v_initial, x, lambda, tol, max_iter, norm_mode, &
               rel_acc, num_iter, info)
+call qr%factorization_residual(H, S, probe, absolute_residual, &
+                               relative_residual, info)
 ```
 
 They also expose the metadata-query methods shown in the state-and-ownership

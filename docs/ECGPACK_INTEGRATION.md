@@ -161,11 +161,14 @@ Both expose the same type-bound method names:
 call state%initialize(capacity, info)
 call state%clear()
 call state%factorize_fresh(H, S, shift, info)
+call state%factorize_fresh(H, S, shift, info, active_order=n)
 call state%replace_symmetric(idx, delta_h, delta_s, info)
 call state%append_symmetric(h_column, s_column, info)
 call state%delete_symmetric(idx, info)
 call state%solve(S, v_initial, x, lambda, tol, max_iter, norm_mode, &
                  rel_acc, num_iter, info)
+call state%factorization_residual(H, S, probe, absolute_residual, &
+                                  relative_residual, info)
 
 valid = state%is_valid()
 n = state%order()
@@ -219,9 +222,12 @@ shift, validity, and both update counters. It is valid for an already empty
 state and returns no status. A cleared object remains a valid Fortran object
 and may be initialized again with a different capacity.
 
-`factorize_fresh` chooses the active order from the shapes of H and S. It
-reuses initialized storage, resets the state-internal updates-since-fresh
-counter, and does not allocate. A shift change is the dense change
+Without its optional argument, `factorize_fresh` chooses the active order from
+the equal square shapes of H and S. ECGPACK may instead pass its capacity-sized
+physical arrays with `active_order=n`; only their leading active principal
+blocks are then used. The routine reuses initialized storage, resets the
+state-internal updates-since-fresh counter, and does not allocate. A shift
+change is the dense change
 `-delta_shift*S`; it always requires `factorize_fresh`. Do not call a
 row/column update to represent a shift change.
 
@@ -233,27 +239,30 @@ ends. There is no custom final procedure.
 
 ## Matrix storage contract
 
-For `factorize_fresh(H,S,...)` and `solve(S,...)`, only the lower triangle,
-including the diagonal, is defined and read. The upper triangle may be
-uninitialized. Complex inputs are interpreted as Hermitian and their opposite
-triangle is produced by conjugation.
+For `factorize_fresh(H,S,...)`, `solve(S,...)`, and
+`factorization_residual(H,S,...)`, only the lower triangle of the leading
+active block, including the diagonal, is defined and read. The upper triangle
+and capacity storage outside that block may be uninitialized. Complex inputs
+are interpreted as Hermitian and their opposite triangle is produced by
+conjugation or by the Hermitian BLAS operation.
 
 The complex diagonals of physical H and S must be real. Roundoff-sized
 imaginary parts are accepted and discarded; larger values return
 `QR_ERR_INVALID_ARGUMENT` before existing factors are modified.
 
-Use active arrays whose shapes are exactly `n` by `n`. If ECGPACK stores an
-active matrix inside a larger leading-dimension array, passing
-`S(1:n,1:n)` can be noncontiguous when the physical leading dimension exceeds
-`n`. A compiler may create a hidden temporary when qrlinalg passes that section
-to BLAS during every inverse iteration. For predictable no-copy solve
-performance, keep the active overlap matrix in contiguous `n`-by-`n` storage
-or verify the chosen compiler's behavior explicitly.
+ECGPACK may pass full capacity-sized allocatable arrays directly. qrlinalg
+obtains the physical leading dimension from each array descriptor and uses only
+the first `n` rows and columns. This avoids constructing packed
+`H(1:n,1:n)` and `S(1:n,1:n)` temporaries. The matrix dummies are contiguous;
+a compiler may create a correct temporary for a legacy noncontiguous section,
+but full allocatable matrices retain their physical leading dimensions.
 
 The factorization input must be physical H, not an already shifted matrix:
 
 ```fortran
 call state%factorize_fresh(H, S, shift, info)
+! Capacity-sized storage with active order n:
+call state%factorize_fresh(H, S, shift, info, active_order=n)
 ```
 
 Do not pass `M=H-shift*S` as H; qrlinalg forms the shift internally and doing
@@ -279,7 +288,11 @@ call state%initialize(capacity, info)
 call state%factorize_fresh(H, S, shift, info)
 ```
 
-- H and S must be square, equal-sized, nonempty, and no larger than capacity.
+- Without `active_order`, H and S must be square, equal-sized, nonempty, and no
+  larger than capacity.
+- With `active_order=n`, n must be positive and no larger than capacity, and H
+  and S must each have at least n rows and columns. Their physical extents may
+  otherwise differ.
 - Only their lower triangles are read; neither matrix is modified or retained.
 - On success, the state represents `H-shift*S=Q*R` and is ready to solve or
   update.
@@ -298,8 +311,9 @@ call state%solve(S, v_initial, x, lambda, tol, max_iter, norm_mode, &
 
 Inputs:
 
-- `S(n,n)`: lower triangle of the same overlap matrix represented by the
-  factors; expected positive definite.
+- `S(:,:)`: at least n rows and columns; the leading active lower triangle is
+  the same overlap matrix represented by the factors and is expected positive
+  definite.
 - `v_initial(n)`: nonzero starting vector with a component in the desired
   eigendirection. It is not modified.
 - `tol`: direction-change tolerance.
@@ -313,6 +327,25 @@ Outputs:
 - `rel_acc`: direction-change estimate, not a rigorous error bound.
 - `num_iter`: inverse iterations performed.
 - `info`: status.
+
+### `factorization_residual`
+
+```fortran
+call state%factorization_residual(H, S, v, absolute_residual, &
+                                  relative_residual, info)
+```
+
+This operation evaluates the discrepancy between `(H-shift*S)*v` and
+`Q*(R*v)` without exposing the private factors. H and S may be capacity-sized;
+only their leading active lower triangles are read. The nonzero probe vector v
+must have exactly `state%order()` elements. Both outputs are initialized to
+zero on validation errors, and the call does not change factors, metadata, or
+update counters. It allocates no memory and never refactorizes automatically.
+
+ECGPACK should choose probe vectors and thresholds appropriate to its refresh
+policy. A small result covers only the tested action direction and is not a
+full matrix-norm guarantee. A typical policy can combine this diagnostic with
+`get_updates_since_fresh()` and explicitly call `factorize_fresh` when needed.
 
 Normalization modes are:
 

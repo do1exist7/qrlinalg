@@ -4,10 +4,11 @@
 
 1. allocate and initialize a state with spare capacity;
 2. factorize and solve at one shift;
-3. replace, append, and delete symmetric rows and columns;
-4. refactorize the current matrices when the shift changes;
-5. deallocate the complete state;
-6. allocate a fresh state with a different capacity and shift.
+3. measure the action residual between physical matrices and stored factors;
+4. replace, append, and delete symmetric rows and columns;
+5. refactorize the current matrices when the shift changes;
+6. deallocate the complete state;
+7. allocate a fresh state with a different capacity and shift.
 
 Build and run it from the repository root:
 

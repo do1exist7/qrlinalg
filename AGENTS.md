@@ -30,11 +30,13 @@ The following operations are implemented for both `qr_real_state` and
 
 - `initialize(capacity, info)`;
 - `clear()`;
-- `factorize_fresh(H, S, shift, info)`;
+- `factorize_fresh(H, S, shift, info[, active_order])`;
 - `replace_symmetric(idx, delta_h, delta_s, info)`;
 - `append_symmetric(h_column, s_column, info)`;
 - `delete_symmetric(idx, info)`;
 - `solve(S, v_initial, x, lambda, tol, max_iter, norm_mode, rel_acc, num_iter,
+  info)`.
+- `factorization_residual(H, S, v, absolute_residual, relative_residual,
   info)`.
 
 Both state types also expose the same pure read-only metadata queries:
@@ -74,6 +76,9 @@ initialized before it can be factorized again.
   queries across the complete state lifecycle without accessing components.
 - `test/test_status_codes.f90` fixes the public numeric status assignments and
   prevents existing status values from being renumbered.
+- `test/test_factorization_residual.f90` verifies capacity-sized active blocks,
+  physical leading dimensions, inactive sentinels, drift measurement across
+  structural updates, fresh-factor comparisons, and validation behavior.
 - `test/test_inverse_iteration_failures.f90` contains analytical tests for
   degenerate, clustered, oscillatory, singular, and precondition-violating
   inverse-iteration regimes.
@@ -138,7 +143,7 @@ Each initialized state owns:
 - full `capacity` by `capacity` arrays for explicit `Q` and `R`;
 - Householder coefficients `tau`;
 - reusable factorization workspace;
-- reusable structural-update workspace;
+- reusable structural-update and residual-action workspace;
 - two capacity-length solve vectors;
 - active order, capacity, shift, validity, and update counters.
 
@@ -167,6 +172,13 @@ Fresh factorization represents
 ```text
 M = H - shift*S = Q*R.
 ```
+
+The optional final `active_order=n` argument permits H and S to retain larger
+physical extents. When present, n must be positive, fit within state capacity,
+and fit within both extents of each matrix; only the leading n-by-n blocks are
+used. When absent, the original equal-square shape validation applies. Matrix
+dummies are contiguous and BLAS leading dimensions come from their descriptors
+so full capacity-sized allocatable arrays require no packed active temporary.
 
 Form `M` directly in the state-owned `Q` buffer. Do not create an additional
 full shifted-matrix temporary. Only the lower triangles of caller-owned `H`
@@ -223,8 +235,24 @@ R*x = y
 ```
 
 Use bundled `DSYMV`/`ZHEMV` for `S*v`; only the lower triangle of `S` is
-referenced. Use `DGEMV`/`ZGEMV` for applying `Q` and `DTRSV`/`ZTRSV` for the
-triangular solve.
+referenced. S may have extents larger than the active order, and its physical
+first extent must be passed as the BLAS leading dimension. Use `DGEMV`/`ZGEMV`
+for applying `Q` and `DTRSV`/`ZTRSV` for the triangular solve.
+
+## Factorization-drift residual
+
+Both state types expose `factorization_residual`, which compares the physical
+action `(H-shift*S)*v` with the factor action `Q*(R*v)` for one nonzero probe
+vector. It returns the Euclidean difference norm and that norm divided by the
+sum of both action norms plus `tiny(1.0_wp)`. H and S may be capacity-sized;
+only their leading active lower triangles are read with descriptor-derived
+leading dimensions.
+
+The operation reuses three vector slices of state-owned update workspace and
+must not allocate, expose factors, change metadata or counters, or trigger
+automatic factorization. It initializes both residual outputs to zero on every
+error path. The caller owns probe selection, tolerance selection, and refresh
+policy; one action residual is not a full matrix-norm bound.
 
 Real iterates are scaled by `max(abs(x))`. Complex iterates are scaled by the
 largest magnitude among every real and imaginary component, not by the

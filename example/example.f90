@@ -7,6 +7,7 @@ program qrlinalg_example
   real(wp) :: h(2,2), s(2,2), h3(3,3), s3(3,3)
   real(wp) :: delta_h(2), delta_s(2), h_column(3), s_column(3)
   real(wp) :: initial(3), x(3), lambda, rel_acc
+  real(wp) :: absolute_factor_residual, relative_factor_residual
   integer :: info, num_iter
 
   !Only the lower triangles of H and S are required.
@@ -26,6 +27,11 @@ program qrlinalg_example
   call check_info('initialize', info)
   call qr%factorize_fresh(h, s, shift=0.8_wp, info=info)
   call check_info('factorize', info)
+  call qr%factorization_residual(h, s, initial(1:2), &
+    absolute_factor_residual, relative_factor_residual, info)
+  call check_info('factorization residual', info)
+  write(*,'(a,es10.2)') 'initial relative factor residual = ', &
+                         relative_factor_residual
   call solve_and_print('initial factors', s, initial(1:2), x(1:2))
 
   !The caller owns H and S, so apply the same physical replacement locally.
