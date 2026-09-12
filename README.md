@@ -6,9 +6,11 @@ real/complex QR factorization plus generalized inverse iteration.
 Symmetric/Hermitian row-and-column replacement, end-appending, and principal-
 submatrix deletion update the stored factors in place.
 
-The project vendors the generic-precision `qrupdate-ng` sources under
-`src/qrupdate/`, copied from `linalg/src/qrupdate`. That directory records the
-upstream commit and retains the QR-update GPL license and the Netlib notices.
+The project vendors modified, generic-precision sources derived from Martin
+Köhler's official
+[`qrupdate-ng`](https://gitlab.mpi-magdeburg.mpg.de/koehlerm/qrupdate-ng)
+project under `src/qrupdate/`. That directory retains the qrupdate-ng GPL
+license and the Netlib notices.
 The bundled BLAS additionally contains precision-specific DGEMM and ZGEMM
 kernels developed on the `optimize/qr-hotpaths` branch. LAPACK and the remaining
 BLAS routines retain their original generic-precision implementations.
@@ -86,6 +88,18 @@ OpenMP can lose to the serial build for small matrices, update operations are
 not threaded, and eight-thread SMT scaling was unstable on the four-core test
 host. The default therefore remains serial; benchmark the intended matrix
 sizes and use physical-core affinity before selecting `OPENMP=1` in production.
+
+## License and third-party software
+
+The original qrlinalg code and documentation are copyright (c) 2026 Dias
+Suleimenov and licensed under the [BSD 3-Clause License](LICENSE).
+
+The bundled, modified qrupdate-ng implementation is licensed separately under
+GPL-3.0-or-later. qrlinalg currently links that code into the same library, so
+distributed combined binaries are subject to the GPL-3.0-or-later terms. The
+bundled Netlib BLAS/LAPACK routines retain their own BSD-style notices. See
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for attribution, modification
+details, and the locations of the complete license texts.
 
 ## Complete example
 

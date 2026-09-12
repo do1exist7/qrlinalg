@@ -1,6 +1,6 @@
 name = "qrlinalg"
 version = "0.1.1"
-license = "GPL-3.0-or-later"
+license = "BSD-3-Clause AND GPL-3.0-or-later"
 
 [build]
 auto-executables = false

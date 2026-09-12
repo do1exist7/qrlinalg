@@ -14,13 +14,11 @@
 *  (Z) Level 1, 2 and 3 routines used by ECGPACK, together with LSAME,
 *  XERBLA, IDAMAX and DCABS1.
 *
-*  This file is compiled only when the build selects LINALG=netlib.
-*  When an optimized library is chosen instead (mkl, openblas, lblas,
-*  aocl) this file is excluded from the build and that library is
-*  linked in its place.
+*  This file provides qrlinalg's bundled, generic-precision BLAS.  It
+*  is compiled as part of the qrlinalg library.
 *
 *---------------------------------------------------------------------
-*  Modifications made for ECGPACK
+*  Generic-precision modifications used by qrlinalg
 *---------------------------------------------------------------------
 *
 *  The real kind has been made selectable: DOUBLE PRECISION
@@ -32,10 +30,10 @@
 *  precision.  The individual netlib source files were also
 *  concatenated into this single aggregate file, with separator
 *  comment lines inserted between routines.  Problems observed in this
-*  copy should be reported to the ECGPACK authors rather than to the
-*  LAPACK developers.
+*  copy should be reported to the qrlinalg maintainers rather than to
+*  the LAPACK developers.
 *
-*  See THIRD-PARTY-NOTICES.md in the root of the ECGPACK repository.
+*  See THIRD_PARTY_NOTICES.md in the root of the qrlinalg repository.
 *
 *---------------------------------------------------------------------
 *  Copyright and license of the original software.  Reproduced from

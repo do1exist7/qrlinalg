@@ -1,3 +1,6 @@
+! SPDX-License-Identifier: BSD-3-Clause
+! Copyright (c) 2026 Dias Suleimenov
+!
 !Module qrlinalg provides serial QR factorizations and inverse iteration for
 !the generalized symmetric and Hermitian eigenvalue problems
 !
